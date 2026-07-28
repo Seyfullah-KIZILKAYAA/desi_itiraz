@@ -1,0 +1,23 @@
+{
+  "name": "desi-itiraz",
+  "version": "0.1.0",
+  "description": "Trendyol desi itiraz otomasyonu — kaydet ve tekrar oynat",
+  "main": "src/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "template": "node scripts/generate-template.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "uuid": "^11.0.5",
+    "ws": "^8.18.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1"
+  }
+}

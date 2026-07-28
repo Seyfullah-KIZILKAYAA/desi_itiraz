@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <title>Desi İtiraz Otomasyonu</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>Desi İtiraz Otomasyonu</h1>
+      <div id="bridgeStatus" class="status status--off">
+        <span class="dot"></span><span id="bridgeText">Eklenti bağlı değil</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab is-active" data-tab="recordings">Kayıtlar</button>
+      <button class="tab" data-tab="excel">Excel</button>
+      <button class="tab" data-tab="run">Çalıştır</button>
+    </nav>
+
+    <!-- ---------- Kayıtlar ---------- -->
+    <section class="panel is-active" id="tab-recordings">
+      <div class="row">
+        <select id="panelSelect">
+          <option value="trendyol">Trendyol</option>
+        </select>
+        <select id="kindSelect">
+          <option value="setup">Hazırlık kaydı — itiraz sayfasına kadar (bir kez çalışır)</option>
+          <option value="itiraz" selected>İtiraz kaydı — her sipariş için tekrarlanır</option>
+        </select>
+        <button id="btnStartRec" class="primary">Yeni Kayıt Başlat</button>
+        <button id="btnStopRec" class="primary" hidden>Kaydı Bitir</button>
+        <button id="btnCancelRec" hidden>İptal</button>
+      </div>
+
+      <div id="recBanner" class="banner" hidden></div>
+
+      <div class="split">
+        <div class="col">
+          <h2>Kayıt Kitaplığı</h2>
+          <div id="recordingList" class="list"></div>
+        </div>
+        <div class="col">
+          <h2>Adımlar</h2>
+          <div id="stepList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- Excel ---------- -->
+    <section class="panel" id="tab-excel">
+      <div class="row">
+        <button id="btnPickExcel" class="primary">Excel Dosyası Seç</button>
+        <span id="excelFile" class="muted">Dosya seçilmedi</span>
+      </div>
+
+      <div id="mappingBox" hidden>
+        <h2>Kolon Eşleme</h2>
+        <p class="muted">
+          Her değişken için Excel'deki karşılık gelen kolonu seçin. Zorunlu
+          değişkenler eşlenmeden kuyruk oluşturulamaz.
+        </p>
+        <div id="mappingFields" class="mapping"></div>
+        <div class="row">
+          <button id="btnBuildQueue" class="primary">Kuyruğu Oluştur</button>
+          <span id="queueInfo" class="muted"></span>
+        </div>
+        <div id="warnings" class="banner banner--warn" hidden></div>
+        <h2>Önizleme</h2>
+        <div class="tablewrap"><table id="previewTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ---------- Çalıştır ---------- -->
+    <section class="panel" id="tab-run">
+      <div class="runsel">
+        <label>
+          <span>1. Hazırlık kaydı <em>— başta bir kez çalışır</em></span>
+          <select id="setupSelect"></select>
+        </label>
+        <label>
+          <span>2. İtiraz kaydı <em>— her sipariş için tekrarlanır</em></span>
+          <select id="itirazSelect"></select>
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="btnRun" class="primary">Başlat</button>
+        <button id="btnPause" disabled>Duraklat</button>
+        <button id="btnStop" disabled>Durdur</button>
+        <button id="btnExport">Sonuçları Excel'e Aktar</button>
+        <button id="btnClearQueue">Kuyruğu Temizle</button>
+        <label class="check">
+          <input type="checkbox" id="stopOnError" />
+          İlk hatada dur
+        </label>
+      </div>
+      <div id="runSummary" class="summary"></div>
+      <div class="tablewrap"><table id="queueTable"></table></div>
+      <h2>Günlük</h2>
+      <div id="log" class="log"></div>
+    </section>
+
+    <!--
+      Electron'da window.prompt() desteklenmez ("prompt() is not supported"
+      hatası fırlatır), bu yüzden kendi diyalog penceremizi kullanıyoruz.
+    -->
+    <div id="modalBack" class="modal-back" hidden>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal__title" id="modalTitle"></div>
+        <div class="modal__body" id="modalBody"></div>
+        <input type="text" id="modalInput" />
+        <div class="modal__actions">
+          <button id="modalCancel">İptal</button>
+          <button id="modalOk" class="primary">Tamam</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
