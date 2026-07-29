@@ -12,7 +12,7 @@ const {
   StepStatus,
   DEFAULT_STEP_TIMEOUT_MS,
 } = require('../shared/protocol');
-const { substituteDeep, collectVariables } = require('../shared/variables');
+const { substituteDeep, findHardcodedOrderNo } = require('../shared/variables');
 
 const RunState = {
   IDLE: 'idle',
@@ -227,25 +227,16 @@ class Player extends EventEmitter {
     const orderNo = String(entry.values?.siparisNo ?? '').trim();
     if (orderNo === '') return null;
 
-    // Kayıt {{siparisNo}} kullanıyorsa doğru bağlanmış demektir.
-    if (collectVariables(recording.steps ?? []).has('siparisNo')) return null;
+    const hardcoded = findHardcodedOrderNo(recording.steps);
+    // Sabit değer satırınkiyle aynıysa zarar yok (tek satırlık deneme).
+    if (hardcoded === null || hardcoded === orderNo) return null;
 
-    // Sipariş numarası uzun bir rakam dizisidir; adımlarda böyle sabit bir
-    // değer varsa ve satırınkiyle aynı değilse yanlış siparişe yazılacaktır.
-    for (const step of recording.steps ?? []) {
-      const value = String(step.value ?? step.text ?? '').trim();
-      if (!/^\d{8,}$/.test(value)) continue;
-      if (value === orderNo) continue;
-
-      return (
-        `Kayıt "${recording.customLabel || recording.sequentialName}" sipariş ` +
-        `numarasını sabit "${value}" olarak yazıyor; bu satırın numarası ` +
-        `${orderNo}. Kayıttaki sipariş no adımını {{siparisNo}} değişkenine ` +
-        'bağlayın, yoksa hep aynı siparişe itiraz gönderilir.'
-      );
-    }
-
-    return null;
+    return (
+      `Kayıt "${recording.customLabel || recording.sequentialName}" sipariş ` +
+      `numarasını sabit "${hardcoded}" olarak yazıyor; bu satırın numarası ` +
+      `${orderNo}. Kayıttaki sipariş no adımını {{siparisNo}} değişkenine ` +
+      'bağlayın, yoksa hep aynı siparişe itiraz gönderilir.'
+    );
   }
 
   /**

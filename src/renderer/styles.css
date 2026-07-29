@@ -230,6 +230,17 @@ tr.is-current td { background: #fff6ec; }
 
 .sep { border: 0; border-top: 1px solid var(--line); margin: 24px 0 4px; }
 
+/* Kayıt kartındaki "sabit sipariş no" uyarısı — gözden kaçmamalı. */
+.card__warn {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #fff8e5;
+  border: 1px solid #f0d999;
+  border-radius: 4px;
+  color: #8a6100;
+}
+
 /* Modal geniş varyantı — kategori tablosu iki sütunlu ve uzun. */
 .modal--wide { width: 620px; max-width: 92vw; }
 .modal--wide .modal__body { text-align: left; }

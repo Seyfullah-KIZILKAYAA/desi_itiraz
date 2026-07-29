@@ -234,6 +234,8 @@ function registerIpc() {
       filePath,
       fileName: path.basename(filePath),
       sheetName: workbook.sheetName,
+      kind: workbook.kind,
+      label: workbook.label,
       satirSayisi: workbook.rows.length,
       siparisSayisi: loadedOrders.length,
     };

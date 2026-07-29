@@ -394,6 +394,142 @@ test('gruplama: adet okunamazsa 1 kabul edilir', () => {
   assert.equal(orders[0].items[0].adet, 1);
 });
 
+// -------------------------------------------------- iade dosyası biçimi
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const XLSX = require('xlsx');
+
+/** Verilen satır dizisinden geçici bir xlsx üretir. */
+function writeSheet(rows, sheetName) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desi-fmt-'));
+  const file = path.join(dir, 'test.xlsx');
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), sheetName);
+  XLSX.writeFile(book, file);
+  return file;
+}
+
+test('biçim: iade dosyası tanınır, başlık 1. satırdan okunur', () => {
+  const file = writeSheet(
+    [
+      [
+        'Barkod',
+        'Sipariş Numarası',
+        'Sipariş Tarihi',
+        'Durum',
+        'Ürün Adı',
+        'Tedarikçi Stok Kodu',
+        'Adet',
+        'Birim Fiyatı',
+        'İade Desi',
+        'Faturalanan Kargo Tutarı',
+      ],
+      ['86829', '11366070173', '18.06.2026 13:24', 'Onaylandı', 'Erkek T-Shirt', 'S1', '2', '100', '5.0', '247.83'],
+    ],
+    'İadeler'
+  );
+
+  const wb = desi.readOrderWorkbook(file);
+  assert.equal(wb.kind, 'iade');
+  assert.equal(wb.label, 'İadeleriniz');
+  assert.equal(wb.rows.length, 1);
+
+  const orders = desi.groupByOrder(wb);
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].mevcutDesi, 5, 'İade Desi kolonu okunmalı');
+  assert.equal(orders[0].paketNo, '', 'iade dosyasında paket no yok');
+});
+
+test('biçim: sipariş dosyası hâlâ 2. satır başlıkla okunur', () => {
+  const file = writeSheet(
+    [
+      ['Yasal uyarı metni'],
+      [
+        'Paket No',
+        'Sipariş Tarihi',
+        'Sipariş Numarası',
+        'Ürün Adı',
+        'Sipariş Statüsü',
+        'Marka',
+        'Stok Kodu',
+        'Adet',
+        'Birim Fiyatı',
+        'Kargodan alınan desi',
+        'Faturalanan Kargo Tutarı',
+      ],
+      ['P1', '28.06.2026 00:00', '11363394944', 'Erkek T-Shirt', 'Teslim Edildi', 'M', 'S1', '4', '100', '3.0', '122.39'],
+    ],
+    'Tedarikci_Siparisleri'
+  );
+
+  const wb = desi.readOrderWorkbook(file);
+  assert.equal(wb.kind, 'siparis');
+  assert.equal(wb.rows.length, 1);
+
+  const orders = desi.groupByOrder(wb);
+  assert.equal(orders[0].mevcutDesi, 3);
+  assert.equal(orders[0].paketNo, 'P1');
+});
+
+test('iade: Durum kolonu statü kuralını tetiklemez', () => {
+  // "İade edildi" benzeri bir durum iade dosyasında normaldir; elenmemeli.
+  const iade = order({ kind: 'iade', statu: 'Onaylandı' });
+  const { claims, stats } = desi.computeClaims([
+    { ...iade, items: [{ urunAdi: 'Erkek T-Shirt', adet: 4, stokKodu: '', birimFiyat: 100 }] },
+  ]);
+  assert.equal(stats.elenenIade, 0);
+  assert.equal(claims.length, 1);
+});
+
+test('sipariş: İade edildi statüsü hâlâ elenir', () => {
+  const { claims, stats } = desi.computeClaims([order({ statu: 'İade edildi' })]);
+  assert.equal(claims.length, 0);
+  assert.equal(stats.elenenIade, 1);
+});
+
+test('iade: kendi eşiği (93.05) uygulanır, sipariş eşiği değil', () => {
+  const items = [{ urunAdi: 'Erkek T-Shirt', adet: 4, stokKodu: '', birimFiyat: 100 }];
+
+  // 93.05 iade eşiğine eşit -> elenir
+  const esikte = desi.computeClaims([order({ kind: 'iade', items, kargoTutari: 93.05 })]);
+  assert.equal(esikte.claims.length, 0);
+  assert.equal(esikte.stats.elenenFiyat, 1);
+
+  // 100 iade eşiğinin üstünde -> kalır (sipariş eşiği 110.39 olsaydı elenirdi)
+  const ustunde = desi.computeClaims([order({ kind: 'iade', items, kargoTutari: 100 })]);
+  assert.equal(ustunde.claims.length, 1, 'iade eşiği 93.05 olduğu için kalmalı');
+});
+
+test('sipariş: iade eşiğinden etkilenmez', () => {
+  // 100, iade eşiğinin üstünde ama sipariş eşiğinin (110.39) altında -> elenir
+  const { claims } = desi.computeClaims([order({ kargoTutari: 100 })]);
+  assert.equal(claims.length, 0);
+});
+
+test('iade eşiği ayardan değiştirilebilir', () => {
+  const items = [{ urunAdi: 'Erkek T-Shirt', adet: 4, stokKodu: '', birimFiyat: 100 }];
+  const { claims } = desi.computeClaims([order({ kind: 'iade', items, kargoTutari: 93.05 })], {
+    returnPriceThreshold: 80,
+  });
+  assert.equal(claims.length, 1);
+});
+
+test('iade: tarih fiyat güncellemesinden etkilenmez', () => {
+  const items = [{ urunAdi: 'Erkek T-Shirt', adet: 4, stokKodu: '', birimFiyat: 100 }];
+  // 13.07 sonrası tarih ama iade -> yeni sipariş eşiği (115.67) değil, 93.05
+  const { claims } = desi.computeClaims([
+    order({ kind: 'iade', items, siparisTarihi: '2026-07-20', kargoTutari: 100 }),
+  ]);
+  assert.equal(claims.length, 1);
+});
+
+test('biçim: tanınmayan dosya anlamlı hata verir', () => {
+  const file = writeSheet([['Ad', 'Soyad'], ['a', 'b']], 'Sayfa1');
+  assert.throws(() => desi.readOrderWorkbook(file), /beklenen kolonlar bulunamadı/);
+});
+
 // ------------------------------------------------------------ yardımcı
 
 test('parseNumber: virgüllü ondalık ve faturalanmamış metni', () => {

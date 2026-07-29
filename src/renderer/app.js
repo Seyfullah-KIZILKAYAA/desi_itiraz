@@ -197,6 +197,17 @@ function renderRecordings() {
     meta.textContent = `${rec.sequentialName} · ${rec.panel} · ${rec.steps.length} adım${reason}`;
     card.appendChild(meta);
 
+    // Sabit sipariş no uyarısı — bu kayıt çalıştırılırsa satırlar düşer.
+    const hardcoded = hardcodedOrderNoOf(rec);
+    if (hardcoded) {
+      const warn = document.createElement('div');
+      warn.className = 'card__warn';
+      warn.textContent =
+        `⚠ Sipariş numarası sabit "${hardcoded}" yazılmış. Sipariş no adımını ` +
+        '{{siparisNo}} değişkenine bağlayın, yoksa hep aynı siparişe itiraz gider.';
+      card.appendChild(warn);
+    }
+
     const actions = document.createElement('div');
     actions.className = 'card__actions';
     actions.appendChild(button('Yeniden Adlandır', () => renameRecording(rec)));
@@ -477,12 +488,49 @@ function paintRecBanner(rec) {
 }
 
 $('btnStopRec').addEventListener('click', async () => {
-  await window.api.recorder.stop();
+  const saved = await window.api.recorder.stop();
   state.recordingActive = false;
   hideBanner();
   toggleRecordingButtons();
   refreshLibrary();
+  warnHardcodedOrderNo(saved);
 });
+
+/**
+ * Kayıtta sipariş numarası {{siparisNo}}'ya bağlanmadıysa uyarır.
+ *
+ * Bağlanmazsa kayıt sırasında yazılan numara sabitlenir ve çalıştırmada her
+ * satır aynı siparişe itiraz gönderir. Player bunu yakalayıp satırları
+ * düşürüyor, ama kullanıcı bunu kaydı bitirir bitirmez bilmeli.
+ */
+function hardcodedOrderNoOf(recording) {
+  if (!recording || recording.kind === 'setup') return null;
+
+  const steps = recording.steps ?? [];
+  const usesVariable = steps.some((s) =>
+    /\{\{\s*siparisNo\s*\}\}/.test(String(s?.value ?? s?.text ?? ''))
+  );
+  if (usesVariable) return null;
+
+  // Sipariş numarası uzun bir rakam dizisidir.
+  return (
+    steps
+      .map((s) => String(s?.value ?? s?.text ?? '').trim())
+      .find((v) => /^\d{8,}$/.test(v)) ?? null
+  );
+}
+
+function warnHardcodedOrderNo(recording) {
+  const hardcoded = hardcodedOrderNoOf(recording);
+  if (!hardcoded) return;
+
+  alert(
+    `DİKKAT: Bu kayıt sipariş numarasını sabit "${hardcoded}" olarak yazıyor.\n\n` +
+      'Böyle bırakılırsa çalıştırmada HER satır bu aynı siparişe itiraz gönderir.\n\n' +
+      'Adımlar listesinden sipariş no adımını bulup "Değişkene Bağla" ile ' +
+      '{{siparisNo}} seçin.'
+  );
+}
 
 $('btnCancelRec').addEventListener('click', async () => {
   if (!confirm('Kayıt iptal edilsin ve silinsin mi?')) return;
@@ -618,12 +666,16 @@ $('btnPickOrders').addEventListener('click', async () => {
     state.selectedClaims = new Set();
 
     $('ordersFile').textContent =
-      `${result.fileName} · ${result.satirSayisi.toLocaleString('tr-TR')} satır · ` +
+      `${result.label} · ${result.fileName} · ` +
+      `${result.satirSayisi.toLocaleString('tr-TR')} satır · ` +
       `${result.siparisSayisi.toLocaleString('tr-TR')} sipariş`;
     $('btnCompute').disabled = false;
     $('claimsBox').hidden = true;
     $('claimStats').hidden = true;
-    desiBanner('Dosya yüklendi. "İtirazları Hesapla" ile devam edin.', 'ok');
+    desiBanner(
+      `"${result.label}" dosyası yüklendi. "İtirazları Hesapla" ile devam edin.`,
+      'ok'
+    );
   } catch (err) {
     desiBanner(`Excel okunamadı: ${err.message}`, 'warn');
   } finally {
@@ -971,6 +1023,7 @@ function fillDesiForm(settings) {
   $('priceThreshold').value = String(settings.priceThreshold);
   $('priceThresholdNew').value = String(settings.priceThresholdNew);
   $('priceChangeDate').value = String(settings.priceChangeDate);
+  $('returnPriceThreshold').value = String(settings.returnPriceThreshold);
   $('includeReturned').checked = settings.includeReturned === true;
 
   const table = $('desiTable');
@@ -1013,6 +1066,7 @@ function readDesiForm() {
     priceThreshold: $('priceThreshold').value,
     priceThresholdNew: $('priceThresholdNew').value,
     priceChangeDate: $('priceChangeDate').value,
+    returnPriceThreshold: $('returnPriceThreshold').value,
     includeReturned: $('includeReturned').checked,
   };
 }

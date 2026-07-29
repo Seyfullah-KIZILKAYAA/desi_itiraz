@@ -92,6 +92,16 @@ test('varsayılan güncel eşik 115.67', () => {
   assert.equal(read.priceChangeDate, '2026-07-13');
 });
 
+test('varsayılan iade eşiği 93.05', () => {
+  assert.equal(new DesiSettings(tempDir()).read().returnPriceThreshold, 93.05);
+});
+
+test('iade eşiği kaydedilir', () => {
+  const settings = new DesiSettings(tempDir());
+  assert.equal(settings.write({ returnPriceThreshold: '95,50' }).returnPriceThreshold, 95.5);
+  assert.equal(settings.read().returnPriceThreshold, 95.5);
+});
+
 test('reset kayıtlı ayarları siler', () => {
   const settings = new DesiSettings(tempDir());
   settings.write({ priceThreshold: 200 });

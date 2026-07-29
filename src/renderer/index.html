@@ -53,9 +53,10 @@
     <section class="panel" id="tab-excel">
       <h2>Desi İtiraz Hesaplama</h2>
       <p class="muted">
-        Trendyol'dan indirdiğiniz "Siparişleriniz" dosyasını yükleyin. Siparişteki
-        ürünlerin kategorisine göre gerçek desi hesaplanır ve fazla girilmiş olanlar
-        listelenir.
+        Trendyol'dan indirdiğiniz <strong>"Siparişleriniz"</strong> veya
+        <strong>"İadeleriniz"</strong> dosyasını yükleyin — türü otomatik
+        algılanır. Siparişteki ürünlerin kategorisine göre gerçek desi hesaplanır
+        ve fazla girilmiş olanlar listelenir.
       </p>
 
       <div class="row">
@@ -190,6 +191,10 @@
             <label>
               <span>Güncel kargo tutarı eşiği</span>
               <input type="text" id="priceThresholdNew" />
+            </label>
+            <label>
+              <span>İade kargo tutarı eşiği — "İadeleriniz" dosyası için</span>
+              <input type="text" id="returnPriceThreshold" />
             </label>
             <label class="check">
               <input type="checkbox" id="includeReturned" />

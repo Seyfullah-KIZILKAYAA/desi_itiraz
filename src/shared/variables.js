@@ -80,9 +80,30 @@ function substituteDeep(node, values) {
   return node;
 }
 
+/**
+ * Kayıtta {{siparisNo}}'ya bağlanmamış, sabit yazılmış sipariş numarası arar.
+ *
+ * Kayıt alınırken forma yazılan numara bir değişkene bağlanmazsa kaydın içine
+ * sabitlenir ve çalıştırmada HER satır aynı siparişe itiraz gönderir. Belirti
+ * sinsidir: desi satırdan satıra doğru değişir, sipariş no sabit kalır.
+ *
+ * @returns {string|null} sabit yazılmış numara, yoksa null
+ */
+function findHardcodedOrderNo(steps) {
+  if (collectVariables(steps ?? []).has('siparisNo')) return null;
+
+  for (const step of steps ?? []) {
+    const value = String(step?.value ?? step?.text ?? '').trim();
+    // Sipariş numarası uzun bir rakam dizisidir.
+    if (/^\d{8,}$/.test(value)) return value;
+  }
+  return null;
+}
+
 module.exports = {
   PLACEHOLDER_RE,
   SYSTEM_VARIABLES,
+  findHardcodedOrderNo,
   extractVariables,
   collectVariables,
   substituteText,

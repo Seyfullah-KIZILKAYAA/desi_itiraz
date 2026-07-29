@@ -12,6 +12,7 @@ const {
   DEFAULT_PRICE_THRESHOLD,
   DEFAULT_PRICE_THRESHOLD_NEW,
   DEFAULT_PRICE_CHANGE_DATE,
+  DEFAULT_RETURN_PRICE_THRESHOLD,
 } = require('./desi');
 
 /** Kullanıcı hiç ayar kaydetmemişse geçerli olan değerler. */
@@ -21,6 +22,7 @@ function defaultSettings() {
     priceThreshold: DEFAULT_PRICE_THRESHOLD,
     priceThresholdNew: DEFAULT_PRICE_THRESHOLD_NEW,
     priceChangeDate: DEFAULT_PRICE_CHANGE_DATE,
+    returnPriceThreshold: DEFAULT_RETURN_PRICE_THRESHOLD,
     includeReturned: false,
   };
 }
@@ -52,6 +54,10 @@ class DesiSettings {
       priceThreshold: sanitizeThreshold(stored.priceThreshold, defaults.priceThreshold),
       priceThresholdNew: sanitizeThreshold(stored.priceThresholdNew, defaults.priceThresholdNew),
       priceChangeDate: sanitizeDate(stored.priceChangeDate, defaults.priceChangeDate),
+      returnPriceThreshold: sanitizeThreshold(
+        stored.returnPriceThreshold,
+        defaults.returnPriceThreshold
+      ),
       includeReturned: stored.includeReturned === true,
     };
   }
@@ -67,6 +73,10 @@ class DesiSettings {
         defaults.priceThresholdNew
       ),
       priceChangeDate: sanitizeDate(settings?.priceChangeDate, defaults.priceChangeDate),
+      returnPriceThreshold: sanitizeThreshold(
+        settings?.returnPriceThreshold,
+        defaults.returnPriceThreshold
+      ),
       includeReturned: settings?.includeReturned === true,
     };
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
