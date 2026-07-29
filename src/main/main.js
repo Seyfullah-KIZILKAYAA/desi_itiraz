@@ -10,6 +10,8 @@ const { RecordingLibrary } = require('../core/recordings');
 const { Recorder } = require('../core/recorder');
 const { Player } = require('../core/player');
 const excel = require('../core/excel');
+const desi = require('../core/desi');
+const { DesiSettings } = require('../core/desi-settings');
 const { DEFAULT_PORT, ToApp } = require('../shared/protocol');
 
 let window = null;
@@ -17,6 +19,11 @@ let bridge = null;
 let library = null;
 let recorder = null;
 let player = null;
+let settings = null;
+
+/** Yüklenen Excel'in gruplanmış hali — her hesaplamada yeniden okunmasın diye. */
+let loadedOrders = null;
+let loadedFilePath = null;
 
 /** Arayüze olay gönderir (pencere kapalıysa sessizce yutar). */
 function emit(channel, payload) {
@@ -207,6 +214,53 @@ function registerIpc() {
     return excel.exportResults(result.filePath, entries, variables);
   });
 
+  // --- Desi itiraz hesaplama ---
+  ipcMain.handle('desi:pick', async () => {
+    const result = await dialog.showOpenDialog(window, {
+      title: 'Trendyol "Siparişleriniz" Excel dosyasını seç',
+      filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    const filePath = result.filePaths[0];
+    // 147 bin satırlık dosyanın okunması ~1 dk sürüyor; her hesaplamada
+    // yeniden okumamak için gruplanmış hali bellekte tutulur.
+    const workbook = desi.readOrderWorkbook(filePath);
+    loadedOrders = desi.groupByOrder(workbook);
+    loadedFilePath = filePath;
+
+    return {
+      filePath,
+      fileName: path.basename(filePath),
+      sheetName: workbook.sheetName,
+      satirSayisi: workbook.rows.length,
+      siparisSayisi: loadedOrders.length,
+    };
+  });
+
+  ipcMain.handle('desi:getSettings', () => settings.read());
+  ipcMain.handle('desi:saveSettings', (_e, next) => settings.write(next));
+  ipcMain.handle('desi:resetSettings', () => settings.reset());
+  ipcMain.handle('desi:defaultCategories', () => ({ ...desi.DEFAULT_CATEGORY_DESI }));
+
+  ipcMain.handle('desi:compute', () => {
+    if (!loadedOrders) throw new Error('Önce bir Excel dosyası yükleyin.');
+    const current = settings.read();
+    const { claims, stats } = desi.computeClaims(loadedOrders, current);
+    return { claims, stats, filePath: loadedFilePath, settings: current };
+  });
+
+  ipcMain.handle('desi:exportClaims', async (_e, { claims }) => {
+    const result = await dialog.showSaveDialog(window, {
+      title: 'İtiraz listesini kaydet',
+      defaultPath: 'desi_itirazlari.xlsx',
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return desi.exportClaims(result.filePath, claims);
+  });
+
   // --- Player ---
   ipcMain.handle('player:run', (_e, { queue, panel, setupRecordingId, stopOnFirstError }) =>
     player.run(queue, { panel, setupRecordingId, stopOnFirstError })
@@ -220,6 +274,7 @@ app.whenReady().then(() => {
   const dataDir = path.join(app.getPath('userData'), 'data');
 
   library = new RecordingLibrary(dataDir);
+  settings = new DesiSettings(dataDir);
   bridge = new Bridge({ port: DEFAULT_PORT });
   recorder = new Recorder({ bridge, library });
   player = new Player({ bridge, library });

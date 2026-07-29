@@ -51,6 +51,51 @@
 
     <!-- ---------- Excel ---------- -->
     <section class="panel" id="tab-excel">
+      <h2>Desi İtiraz Hesaplama</h2>
+      <p class="muted">
+        Trendyol'dan indirdiğiniz "Siparişleriniz" dosyasını yükleyin. Siparişteki
+        ürünlerin kategorisine göre gerçek desi hesaplanır ve fazla girilmiş olanlar
+        listelenir.
+      </p>
+
+      <div class="row">
+        <button id="btnPickOrders" class="primary">Excel Dosyası Yükle</button>
+        <button id="btnDesiInfo">Desi Bilgileri</button>
+        <button id="btnCompute" disabled>İtirazları Hesapla</button>
+        <span id="ordersFile" class="muted">Dosya seçilmedi</span>
+      </div>
+
+      <div id="desiBanner" class="banner" hidden></div>
+      <div id="claimStats" class="summary" hidden></div>
+
+      <div id="claimsBox" hidden>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="claimSelectAll" />
+            Sayfadakileri seç
+          </label>
+          <button id="btnDeleteSelected">Seçilenleri Sil</button>
+          <button id="btnExportClaims">Excel'e Aktar</button>
+          <button id="btnClaimsToQueue" class="primary">Kuyruğa Aktar</button>
+          <span id="claimSelectionInfo" class="muted"></span>
+        </div>
+
+        <div class="tablewrap"><table id="claimsTable"></table></div>
+
+        <div class="row" id="claimsPager">
+          <button id="btnPrevPage">‹ Önceki</button>
+          <span id="pageInfo" class="muted"></span>
+          <button id="btnNextPage">Sonraki ›</button>
+        </div>
+      </div>
+
+      <hr class="sep" />
+
+      <h2>Hazır İtiraz Listesi Yükle</h2>
+      <p class="muted">
+        Elinizde hazır bir itiraz listesi varsa (sipariş no + doğru desi) buradan
+        yükleyip doğrudan kuyruğa alabilirsiniz.
+      </p>
       <div class="row">
         <button id="btnPickExcel" class="primary">Excel Dosyası Seç</button>
         <span id="excelFile" class="muted">Dosya seçilmedi</span>
@@ -98,9 +143,12 @@
         </label>
       </div>
       <div id="runSummary" class="summary"></div>
-      <div class="tablewrap"><table id="queueTable"></table></div>
+
       <h2>Günlük</h2>
       <div id="log" class="log"></div>
+
+      <h2>Kuyruk</h2>
+      <div class="tablewrap"><table id="queueTable"></table></div>
     </section>
 
     <!--
@@ -115,6 +163,54 @@
         <div class="modal__actions">
           <button id="modalCancel">İptal</button>
           <button id="modalOk" class="primary">Tamam</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Desi Bilgileri — kategori ortalama desileri ve kurallar -->
+    <div id="desiBack" class="modal-back" hidden>
+      <div class="modal modal--wide" role="dialog" aria-modal="true">
+        <div class="modal__title">Desi Bilgileri</div>
+        <div class="modal__body">
+          <p class="muted">
+            Her kategori için bir ürünün ortalama desisi. Bir siparişin desisi,
+            içindeki ürünlerin adet × ortalama desi toplamının yukarı
+            yuvarlanmasıyla bulunur (en az 1 desi).
+          </p>
+
+          <div class="rules">
+            <label>
+              <span>Kargo tutarı eşiği — bu tutar ve altı itiraza girmez</span>
+              <input type="text" id="priceThreshold" />
+            </label>
+            <label>
+              <span>Fiyat güncelleme tarihi — bu tarihten sonrası için yeni eşik</span>
+              <input type="text" id="priceChangeDate" placeholder="2026-07-13" />
+            </label>
+            <label>
+              <span>Güncel kargo tutarı eşiği</span>
+              <input type="text" id="priceThresholdNew" />
+            </label>
+            <label class="check">
+              <input type="checkbox" id="includeReturned" />
+              İade edilen siparişleri de dahil et
+            </label>
+          </div>
+
+          <p class="muted">
+            Ayrıca sabit iki kural uygulanır: mevcut desi 3'ün üstündeyken hesap
+            1 çıkarsa itirazda 2 desi girilir; mevcut ile girilecek desi arasında
+            en az 2 fark yoksa itiraz edilmez (panel kabul etmiyor).
+          </p>
+
+          <div class="tablewrap tablewrap--tall">
+            <table id="desiTable"></table>
+          </div>
+        </div>
+        <div class="modal__actions">
+          <button id="desiReset">Varsayılanlara Dön</button>
+          <button id="desiCancel">İptal</button>
+          <button id="desiSave" class="primary">Kaydet</button>
         </div>
       </div>
     </div>

@@ -57,6 +57,16 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('excel:export', { entries, variables }),
   },
 
+  desi: {
+    pick: () => ipcRenderer.invoke('desi:pick'),
+    getSettings: () => ipcRenderer.invoke('desi:getSettings'),
+    saveSettings: (settings) => ipcRenderer.invoke('desi:saveSettings', settings),
+    resetSettings: () => ipcRenderer.invoke('desi:resetSettings'),
+    defaultCategories: () => ipcRenderer.invoke('desi:defaultCategories'),
+    compute: () => ipcRenderer.invoke('desi:compute'),
+    exportClaims: (claims) => ipcRenderer.invoke('desi:exportClaims', { claims }),
+  },
+
   player: {
     run: (queue, panel, setupRecordingId, stopOnFirstError) =>
       ipcRenderer.invoke('player:run', { queue, panel, setupRecordingId, stopOnFirstError }),

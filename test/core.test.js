@@ -302,6 +302,92 @@ function queueRow(values, overrides = {}) {
   };
 }
 
+/** Sipariş no {{siparisNo}}'ya bağlanmamış, sabit yazılmış kayıt. */
+const UNBOUND_STEPS = [
+  {
+    stepId: 1,
+    action: Action.TYPE,
+    selector: { strategies: [{ type: 'id', value: 'orderNumber' }] },
+    value: '11368046310',
+  },
+  {
+    stepId: 2,
+    action: Action.TYPE,
+    selector: { strategies: [{ type: 'id', value: 'desi' }] },
+    value: '{{dogruDesi}}',
+  },
+];
+
+test('sabit sipariş no yazan kayıt satırı düşürür (yanlış siparişe itiraz)', async () => {
+  const library = new RecordingLibrary(tempDir());
+  buildRecording(library, UNBOUND_STEPS);
+  const bridge = fakeBridge();
+  const player = new Player({ bridge, library });
+
+  const queue = [queueRow({ siparisNo: '11424950386', dogruDesi: '2', itirazSebebi: '' })];
+  await player.run(queue, { panel: 'trendyol' });
+
+  assert.equal(queue[0].status, RowStatus.FAILED);
+  assert.match(queue[0].detail, /11368046310/);
+  assert.match(queue[0].detail, /siparisNo/);
+  assert.equal(bridge.seen.length, 0, 'hiçbir adım çalıştırılmamalı');
+});
+
+test('sabit değer satırın kendi numarasıyla aynıysa engellenmez', async () => {
+  const library = new RecordingLibrary(tempDir());
+  buildRecording(library, UNBOUND_STEPS);
+  const player = new Player({ bridge: fakeBridge(), library });
+
+  const queue = [queueRow({ siparisNo: '11368046310', dogruDesi: '2', itirazSebebi: '' })];
+  await player.run(queue, { panel: 'trendyol' });
+
+  assert.equal(queue[0].status, RowStatus.SUCCESS);
+});
+
+test('{{siparisNo}} bağlıysa kontrol engel olmaz', async () => {
+  const library = new RecordingLibrary(tempDir());
+  buildRecording(library, [
+    { ...UNBOUND_STEPS[0], value: '{{siparisNo}}' },
+    UNBOUND_STEPS[1],
+  ]);
+  const player = new Player({ bridge: fakeBridge(), library });
+
+  const queue = [queueRow({ siparisNo: '11424950386', dogruDesi: '2', itirazSebebi: '' })];
+  await player.run(queue, { panel: 'trendyol' });
+
+  assert.equal(queue[0].status, RowStatus.SUCCESS);
+});
+
+test('durdurma adımın ortasında beklemeden devreye girer', async () => {
+  const library = new RecordingLibrary(tempDir());
+  buildRecording(library, OK_STEPS);
+
+  // Asla çözülmeyen adım: durdurma çalışmazsa test zaman aşımına uğrar.
+  let started;
+  const hung = new Promise((resolve) => {
+    started = resolve;
+  });
+  const bridge = {
+    seen: [],
+    executeStep(step) {
+      bridge.seen.push(step);
+      started();
+      return new Promise(() => {});
+    },
+  };
+
+  const player = new Player({ bridge, library });
+  const queue = [queueRow({ siparisNo: '123', dogruDesi: '3', itirazSebebi: '' })];
+  const run = player.run(queue, { panel: 'trendyol' });
+
+  await hung; // ilk adım köprüde asılı kaldı
+  player.stop();
+  await run; // adımın zaman aşımı beklenmeden dönmeli
+
+  assert.equal(queue[0].status, RowStatus.FAILED);
+  assert.match(queue[0].detail, /durduruldu/);
+});
+
 test('başarılı satır Başarılı işaretlenir', async () => {
   const library = new RecordingLibrary(tempDir());
   buildRecording(library, OK_STEPS);

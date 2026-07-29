@@ -12,7 +12,7 @@ const {
   StepStatus,
   DEFAULT_STEP_TIMEOUT_MS,
 } = require('../shared/protocol');
-const { substituteDeep } = require('../shared/variables');
+const { substituteDeep, collectVariables } = require('../shared/variables');
 
 const RunState = {
   IDLE: 'idle',
@@ -32,6 +32,7 @@ class Player extends EventEmitter {
     this.currentIndex = -1;
     this.stopOnFirstError = false;
     this._resumeWaiters = [];
+    this._stopWaiters = [];
   }
 
   /**
@@ -147,6 +148,17 @@ class Player extends EventEmitter {
     entry.recordingId = recording.recordingId;
     entry.recordingName = recording.customLabel || recording.sequentialName;
 
+    // Kayıt sırasında yazılan sipariş no {{siparisNo}}'ya bağlanmamışsa, o
+    // sabit numara HER satırda tekrar girilir; yani yanlış siparişe itiraz
+    // gönderilir. Bu sessizce olmamalı — satırı düşürüp sebebini yazıyoruz.
+    const unbound = this._findUnboundOrderNumber(recording, entry);
+    if (unbound) {
+      entry.status = RowStatus.FAILED;
+      entry.detail = unbound;
+      this.emit('rowFinished', { entry, index });
+      return;
+    }
+
     // Kaydın zorunlu değişkenlerinden biri bu satırda boşsa çalıştırma.
     const missing = (recording.variables ?? [])
       .filter((v) => v.required)
@@ -201,6 +213,42 @@ class Player extends EventEmitter {
   }
 
   /**
+   * Kaydın sipariş numarasını sabit yazıp yazmadığını denetler.
+   *
+   * Kayıt alınırken forma yazılan numara {{siparisNo}}'ya bağlanmazsa o değer
+   * kaydın içine sabitlenir ve her satırda aynı siparişe itiraz gönderilir.
+   * Belirti sinsi: desi satırdan satıra doğru değişir, ama sipariş no sabit
+   * kalır. Bu yüzden sabit değer satırın kendi sipariş numarasından farklıysa
+   * satırı çalıştırmıyoruz.
+   *
+   * @returns {string|null} sorun varsa açıklama, yoksa null
+   */
+  _findUnboundOrderNumber(recording, entry) {
+    const orderNo = String(entry.values?.siparisNo ?? '').trim();
+    if (orderNo === '') return null;
+
+    // Kayıt {{siparisNo}} kullanıyorsa doğru bağlanmış demektir.
+    if (collectVariables(recording.steps ?? []).has('siparisNo')) return null;
+
+    // Sipariş numarası uzun bir rakam dizisidir; adımlarda böyle sabit bir
+    // değer varsa ve satırınkiyle aynı değilse yanlış siparişe yazılacaktır.
+    for (const step of recording.steps ?? []) {
+      const value = String(step.value ?? step.text ?? '').trim();
+      if (!/^\d{8,}$/.test(value)) continue;
+      if (value === orderNo) continue;
+
+      return (
+        `Kayıt "${recording.customLabel || recording.sequentialName}" sipariş ` +
+        `numarasını sabit "${value}" olarak yazıyor; bu satırın numarası ` +
+        `${orderNo}. Kayıttaki sipariş no adımını {{siparisNo}} değişkenine ` +
+        'bağlayın, yoksa hep aynı siparişe itiraz gönderilir.'
+      );
+    }
+
+    return null;
+  }
+
+  /**
    * Bir adım dizisini sırayla çalıştırır.
    * @returns {{ok:boolean, stopped:boolean, succeeded:boolean, detail?:string}}
    */
@@ -234,9 +282,25 @@ class Player extends EventEmitter {
       const timeoutMs = resolved.timeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
       let result;
       try {
-        result = await this.bridge.executeStep(resolved, timeoutMs);
+        // Durdur'a basıldığında adımın kendi zaman aşımını (25 sn'ye kadar)
+        // beklemeden çıkabilmek için yarışa sokuyoruz; aksi halde durdurma
+        // "çalışmıyor" gibi görünüyordu.
+        result = await Promise.race([
+          this.bridge.executeStep(resolved, timeoutMs),
+          this._whenStopped(),
+        ]);
       } catch (err) {
         result = { status: StepStatus.FAILED, detail: err.message };
+      }
+
+      // Yarışı durdurma kazandıysa sonucu yok say ve döngü başına dön.
+      if (this.state === RunState.STOPPED) {
+        if (entry) {
+          entry.status = RowStatus.FAILED;
+          entry.detail = 'Kullanıcı tarafından durduruldu.';
+          this.emit('rowFinished', { entry, index });
+        }
+        return { ok: false, stopped: true, succeeded };
       }
 
       this.emit('stepFinished', { entry, index, step: resolved, result });
@@ -269,6 +333,18 @@ class Player extends EventEmitter {
     return new Promise((resolve) => this._resumeWaiters.push(resolve));
   }
 
+  /**
+   * stop() çağrılınca çözülen söz. Çalışan adımla yarıştırılır ki Durdur'a
+   * basıldığında adımın zaman aşımı beklenmesin.
+   *
+   * Durdurma gelmezse asla çözülmez; bu sızıntı değildir, çünkü yarışı
+   * executeStep kazandığında bu söz çöpe gider.
+   */
+  _whenStopped() {
+    if (this.state === RunState.STOPPED) return Promise.resolve(null);
+    return new Promise((resolve) => this._stopWaiters.push(resolve));
+  }
+
   pause() {
     if (this.state !== RunState.RUNNING) return;
     // Mevcut adım temiz biter; duraklama satır sınırında etkinleşir (spec §7.4).
@@ -292,6 +368,12 @@ class Player extends EventEmitter {
     const waiters = this._resumeWaiters;
     this._resumeWaiters = [];
     for (const resolve of waiters) resolve();
+
+    // Çalışan adımı bekleyen yarışı da çöz; adımın zaman aşımı beklenmesin.
+    const stopWaiters = this._stopWaiters;
+    this._stopWaiters = [];
+    for (const resolve of stopWaiters) resolve(null);
+
     this.emit('stopped');
   }
 

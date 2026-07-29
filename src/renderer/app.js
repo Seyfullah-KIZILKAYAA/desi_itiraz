@@ -9,6 +9,10 @@ const state = {
   recordingActive: false,
   recordingKind: 'itiraz',
   excel: null, // {filePath, headers, mapping, preview}
+  orders: null, // yüklenen sipariş dosyasının özeti
+  claims: [], // hesaplanan itiraz listesi
+  claimsPage: 0,
+  selectedClaims: new Set(),
   queue: [],
   variables: [],
   running: false,
@@ -77,13 +81,16 @@ function ask(title, { body = '', value = '', okLabel = 'Tamam' } = {}) {
 
 // ---------------- Sekmeler ----------------
 
-document.querySelectorAll('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('is-active'));
-    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('is-active'));
-    tab.classList.add('is-active');
-    $(`tab-${tab.dataset.tab}`).classList.add('is-active');
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.classList.toggle('is-active', t.dataset.tab === name);
   });
+  document.querySelectorAll('.panel').forEach((p) => p.classList.remove('is-active'));
+  $(`tab-${name}`).classList.add('is-active');
+}
+
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
 
 // ---------------- Köprü durumu ----------------
@@ -581,6 +588,456 @@ function askVariable(value, guess) {
   });
 }
 
+// ---------------- Desi itiraz hesaplama ----------------
+
+/** 86 bin satır DOM'a basılmasın diye sayfalama. */
+const CLAIMS_PAGE_SIZE = 100;
+
+function desiBanner(text, kind = '') {
+  const box = $('desiBanner');
+  box.hidden = !text;
+  box.textContent = text || '';
+  box.className = 'banner' + (kind ? ` banner--${kind}` : '');
+}
+
+$('btnPickOrders').addEventListener('click', async () => {
+  const button = $('btnPickOrders');
+  button.disabled = true;
+  desiBanner('Excel okunuyor… 150 bin satırlık dosyada bu bir dakikayı bulabilir.');
+
+  try {
+    const result = await window.api.desi.pick();
+    if (!result) {
+      desiBanner('');
+      return;
+    }
+
+    state.orders = result;
+    state.claims = [];
+    state.claimsPage = 0;
+    state.selectedClaims = new Set();
+
+    $('ordersFile').textContent =
+      `${result.fileName} · ${result.satirSayisi.toLocaleString('tr-TR')} satır · ` +
+      `${result.siparisSayisi.toLocaleString('tr-TR')} sipariş`;
+    $('btnCompute').disabled = false;
+    $('claimsBox').hidden = true;
+    $('claimStats').hidden = true;
+    desiBanner('Dosya yüklendi. "İtirazları Hesapla" ile devam edin.', 'ok');
+  } catch (err) {
+    desiBanner(`Excel okunamadı: ${err.message}`, 'warn');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('btnCompute').addEventListener('click', async () => {
+  const button = $('btnCompute');
+  button.disabled = true;
+  desiBanner('Hesaplanıyor…');
+
+  try {
+    const { claims, stats } = await window.api.desi.compute();
+    state.claims = claims;
+    state.claimsPage = 0;
+    state.selectedClaims = new Set();
+
+    renderClaimStats(stats);
+    renderClaims();
+    $('claimsBox').hidden = false;
+    desiBanner('');
+  } catch (err) {
+    desiBanner(`Hesaplanamadı: ${err.message}`, 'warn');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function renderClaimStats(stats) {
+  const box = $('claimStats');
+  box.hidden = false;
+  box.textContent = '';
+
+  const n = (value) => Number(value || 0).toLocaleString('tr-TR');
+  const cells = [
+    ['Toplam sipariş', n(stats.toplamSiparis)],
+    ['İtiraz edilecek', n(stats.itirazEdilecek)],
+    ['Kargo tutarı eşiğinde elenen', n(stats.elenenFiyat)],
+    ['Desi zaten doğru/düşük', n(stats.elenenKucultmeYok)],
+    ['1 desi fark olduğu için elenen', n(stats.elenenYetersizFark)],
+    ['1 yerine 2 desi girilecek', n(stats.yukseltilenIkiDesi)],
+    ['İade edildiği için elenen', n(stats.elenenIade)],
+    ['Mevcut desi 1 olduğu için elenen', n(stats.elenenTaban)],
+    ['Kategorisi bulunamayan ürün içeren', n(stats.kategoriBulunamayan)],
+  ];
+
+  for (const [label, value] of cells) {
+    const item = document.createElement('div');
+    item.className = 'summary__item';
+    const strong = document.createElement('strong');
+    strong.textContent = value;
+    const span = document.createElement('span');
+    span.textContent = label;
+    item.append(strong, span);
+    box.appendChild(item);
+  }
+}
+
+function claimPageCount() {
+  return Math.max(1, Math.ceil(state.claims.length / CLAIMS_PAGE_SIZE));
+}
+
+function currentClaimPage() {
+  const start = state.claimsPage * CLAIMS_PAGE_SIZE;
+  return state.claims.slice(start, start + CLAIMS_PAGE_SIZE);
+}
+
+function renderClaims() {
+  const table = $('claimsTable');
+  table.textContent = '';
+
+  // Ürünler en sonda: uzun metin diğer sütunları ekrandan itmesin.
+  const headers = [
+    '',
+    'Sipariş No',
+    'Adet',
+    'Mevcut Desi',
+    'Hesaplanan',
+    'Fark',
+    'Kargo Tutarı',
+    '',
+    'Ürünler',
+  ];
+  const head = document.createElement('tr');
+  for (const label of headers) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+
+  if (state.claims.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = headers.length;
+    td.className = 'muted';
+    td.textContent = 'İtiraz edilecek sipariş bulunamadı.';
+    tr.appendChild(td);
+    table.appendChild(tr);
+  } else {
+    const fragment = document.createDocumentFragment();
+    for (const claim of currentClaimPage()) fragment.appendChild(claimRow(claim));
+    table.appendChild(fragment);
+  }
+
+  paintClaimPager();
+  paintClaimSelection();
+}
+
+function claimRow(claim) {
+  const tr = document.createElement('tr');
+
+  const pick = document.createElement('td');
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = state.selectedClaims.has(claim.siparisNo);
+  check.addEventListener('change', () => {
+    if (check.checked) state.selectedClaims.add(claim.siparisNo);
+    else state.selectedClaims.delete(claim.siparisNo);
+    paintClaimSelection();
+  });
+  pick.appendChild(check);
+  tr.appendChild(pick);
+
+  tr.appendChild(cell(claim.siparisNo));
+  tr.appendChild(cell(claim.toplamAdet));
+  tr.appendChild(cell(claim.mevcutDesi));
+
+  const entered = document.createElement('td');
+  entered.textContent = String(claim.hesapDesi);
+  if (claim.ikiyeYukseltildi) {
+    // Ham hesap 1'di; mevcut desi 3'ün üstünde olduğu için 2 girilecek.
+    const mark = document.createElement('span');
+    mark.className = 'badge badge--warn';
+    mark.textContent = '↑';
+    mark.title = `Hesap ${claim.hesaplananDesi} desi çıktı, kural gereği 2 desi girilecek.`;
+    entered.append(' ', mark);
+  }
+  tr.appendChild(entered);
+
+  tr.appendChild(cell(`−${claim.mevcutDesi - claim.hesapDesi}`));
+
+  const fee = document.createElement('td');
+  if (claim.faturalanmamis) {
+    fee.textContent = 'Faturalanmamış';
+    fee.className = 'muted';
+  } else {
+    fee.textContent = String(claim.kargoTutari);
+  }
+  tr.appendChild(fee);
+
+  const actions = document.createElement('td');
+  actions.appendChild(
+    button('Sil', () => {
+      state.claims = state.claims.filter((c) => c.siparisNo !== claim.siparisNo);
+      state.selectedClaims.delete(claim.siparisNo);
+      // Son sayfadaki tek satır silinince boş sayfada kalınmasın.
+      if (state.claimsPage >= claimPageCount()) state.claimsPage = claimPageCount() - 1;
+      renderClaims();
+    })
+  );
+  tr.appendChild(actions);
+
+  // Ürünler en sonda: uzun metin desi/kargo sütunlarını ekrandan itmesin.
+  const products = document.createElement('td');
+  products.className = 'cell--products';
+  products.textContent = claim.items.map((i) => `${i.category} ×${i.adet}`).join(', ');
+  // Kesilen metnin tamamı üzerine gelince görünür.
+  products.title = claim.items.map((i) => `${i.category} ×${i.adet} — ${i.urunAdi}`).join('\n');
+  if (claim.unknownCategory) {
+    // Kategorisi bulunamayan ürün "Diğer" varsayılanıyla hesaplandı;
+    // kullanıcı bu satırı gözle kontrol edebilsin.
+    products.appendChild(document.createTextNode(' '));
+    const mark = document.createElement('span');
+    mark.className = 'badge badge--warn';
+    mark.textContent = 'kategori?';
+    mark.title = 'Bazı ürünlerin kategorisi bulunamadı, "Diğer" varsayılanı kullanıldı.';
+    products.appendChild(mark);
+  }
+  tr.appendChild(products);
+
+  return tr;
+}
+
+function cell(text) {
+  const td = document.createElement('td');
+  td.textContent = String(text);
+  return td;
+}
+
+function paintClaimPager() {
+  const pages = claimPageCount();
+  $('pageInfo').textContent =
+    `${state.claims.length.toLocaleString('tr-TR')} itiraz · sayfa ${state.claimsPage + 1}/${pages}`;
+  $('btnPrevPage').disabled = state.claimsPage === 0;
+  $('btnNextPage').disabled = state.claimsPage >= pages - 1;
+  $('claimsPager').hidden = state.claims.length <= CLAIMS_PAGE_SIZE;
+}
+
+function paintClaimSelection() {
+  const count = state.selectedClaims.size;
+  $('claimSelectionInfo').textContent = count > 0 ? `${count} satır seçili` : '';
+  $('btnDeleteSelected').disabled = count === 0;
+
+  const page = currentClaimPage();
+  $('claimSelectAll').checked =
+    page.length > 0 && page.every((c) => state.selectedClaims.has(c.siparisNo));
+}
+
+$('btnPrevPage').addEventListener('click', () => {
+  if (state.claimsPage > 0) state.claimsPage -= 1;
+  renderClaims();
+});
+
+$('btnNextPage').addEventListener('click', () => {
+  if (state.claimsPage < claimPageCount() - 1) state.claimsPage += 1;
+  renderClaims();
+});
+
+$('claimSelectAll').addEventListener('change', (event) => {
+  for (const claim of currentClaimPage()) {
+    if (event.target.checked) state.selectedClaims.add(claim.siparisNo);
+    else state.selectedClaims.delete(claim.siparisNo);
+  }
+  renderClaims();
+});
+
+$('btnDeleteSelected').addEventListener('click', () => {
+  const count = state.selectedClaims.size;
+  if (count === 0) return;
+  if (!confirm(`${count} satır listeden silinecek. Devam edilsin mi?`)) return;
+
+  state.claims = state.claims.filter((c) => !state.selectedClaims.has(c.siparisNo));
+  state.selectedClaims = new Set();
+  if (state.claimsPage >= claimPageCount()) state.claimsPage = claimPageCount() - 1;
+  renderClaims();
+});
+
+$('btnExportClaims').addEventListener('click', async () => {
+  if (state.claims.length === 0) {
+    alert('Aktarılacak itiraz yok.');
+    return;
+  }
+  try {
+    const saved = await window.api.desi.exportClaims(state.claims);
+    if (saved) desiBanner(`Excel'e aktarıldı: ${saved}`, 'ok');
+  } catch (err) {
+    desiBanner(`Aktarılamadı: ${err.message}`, 'warn');
+  }
+});
+
+/**
+ * "Mevcut desisi kaç ve üzeri olanlar aktarılsın?" sorusu.
+ *
+ * Listedeki dağılımı da gösterir ki kullanıcı eşiği körlemesine seçmesin.
+ * İptal edilirse null döner.
+ */
+async function askDesiThreshold() {
+  const dagilim = new Map();
+  for (const claim of state.claims) {
+    dagilim.set(claim.mevcutDesi, (dagilim.get(claim.mevcutDesi) || 0) + 1);
+  }
+
+  const desiler = [...dagilim.keys()].sort((a, b) => a - b);
+  const enKucuk = desiler[0];
+
+  // "3 ve üzeri: 753 itiraz" biçiminde kümülatif döküm.
+  const satirlar = desiler.map((desi) => {
+    const kumulatif = state.claims.filter((c) => c.mevcutDesi >= desi).length;
+    return `${desi} ve üzeri: ${kumulatif.toLocaleString('tr-TR')} itiraz`;
+  });
+
+  const answer = await ask('Hangi siparişler kuyruğa aktarılsın?', {
+    body:
+      `Mevcut desisi girdiğiniz değer ve üzeri olan itirazlar aktarılır.\n\n${satirlar.join('\n')}`,
+    value: String(enKucuk),
+    okLabel: 'Kuyruğa Aktar',
+  });
+  if (answer === null) return null;
+
+  const parsed = Number(String(answer).replace(',', '.'));
+  if (!Number.isFinite(parsed)) {
+    alert('Geçerli bir desi değeri girin.');
+    return null;
+  }
+  return parsed;
+}
+
+$('btnClaimsToQueue').addEventListener('click', async () => {
+  if (state.claims.length === 0) {
+    alert('Kuyruğa alınacak itiraz yok.');
+    return;
+  }
+
+  const selected = await askDesiThreshold();
+  if (selected === null) return;
+
+  const secilenler = state.claims.filter((c) => c.mevcutDesi >= selected);
+  if (secilenler.length === 0) {
+    alert(`Mevcut desisi ${selected} ve üzeri olan itiraz yok.`);
+    return;
+  }
+
+  // Kuyruk tablosu state.variables üzerinden çizilir; desi akışı Excel
+  // eşleme ekranından geçmediği için burada sistem değişkenlerine ayarlanır.
+  state.variables = FALLBACK_VARIABLES;
+
+  state.queue = secilenler.map((claim, index) => ({
+    rowNumber: index + 1,
+    values: {
+      siparisNo: claim.siparisNo,
+      dogruDesi: String(claim.hesapDesi),
+      itirazSebebi: '',
+      aciklama: '',
+    },
+    recordingName: '',
+    recordingId: null,
+    status: 'Bekliyor',
+    detail: '',
+  }));
+
+  renderQueue();
+  updateSummary();
+
+  const atlanan = state.claims.length - secilenler.length;
+  desiBanner(
+    `Mevcut desisi ${selected} ve üzeri ${secilenler.length.toLocaleString('tr-TR')} itiraz ` +
+      `kuyruğa aktarıldı` +
+      (atlanan > 0 ? ` (${atlanan.toLocaleString('tr-TR')} itiraz eşiğin altında kaldı).` : '.'),
+    'ok'
+  );
+  switchTab('run');
+});
+
+// ---------------- Desi Bilgileri ----------------
+
+$('btnDesiInfo').addEventListener('click', async () => {
+  const settings = await window.api.desi.getSettings();
+  fillDesiForm(settings);
+  $('desiBack').hidden = false;
+});
+
+function fillDesiForm(settings) {
+  $('priceThreshold').value = String(settings.priceThreshold);
+  $('priceThresholdNew').value = String(settings.priceThresholdNew);
+  $('priceChangeDate').value = String(settings.priceChangeDate);
+  $('includeReturned').checked = settings.includeReturned === true;
+
+  const table = $('desiTable');
+  table.textContent = '';
+
+  const head = document.createElement('tr');
+  for (const label of ['Kategori', 'Ortalama Desi']) {
+    const th = document.createElement('th');
+    th.textContent = label;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+
+  for (const [name, value] of Object.entries(settings.categoryDesi)) {
+    const tr = document.createElement('tr');
+    tr.appendChild(cell(name));
+
+    const td = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = String(value);
+    input.dataset.category = name;
+    td.appendChild(input);
+    tr.appendChild(td);
+
+    table.appendChild(tr);
+  }
+}
+
+function readDesiForm() {
+  const categoryDesi = {};
+  $('desiTable')
+    .querySelectorAll('input[data-category]')
+    .forEach((input) => {
+      categoryDesi[input.dataset.category] = input.value;
+    });
+
+  return {
+    categoryDesi,
+    priceThreshold: $('priceThreshold').value,
+    priceThresholdNew: $('priceThresholdNew').value,
+    priceChangeDate: $('priceChangeDate').value,
+    includeReturned: $('includeReturned').checked,
+  };
+}
+
+$('desiSave').addEventListener('click', async () => {
+  await window.api.desi.saveSettings(readDesiForm());
+  $('desiBack').hidden = true;
+  desiBanner(
+    state.claims.length > 0
+      ? 'Desi bilgileri kaydedildi. Yeni değerlerin geçerli olması için "İtirazları Hesapla"ya tekrar basın.'
+      : 'Desi bilgileri kaydedildi.',
+    'ok'
+  );
+});
+
+$('desiCancel').addEventListener('click', () => {
+  $('desiBack').hidden = true;
+});
+
+$('desiReset').addEventListener('click', async () => {
+  if (!confirm('Tüm desi bilgileri ve kurallar varsayılana dönecek. Devam edilsin mi?')) return;
+  const settings = await window.api.desi.resetSettings();
+  fillDesiForm(settings);
+});
+
 // ---------------- Excel ----------------
 
 $('btnPickExcel').addEventListener('click', async () => {
@@ -719,7 +1176,8 @@ function renderQueue(currentIndex = -1) {
     const empty = document.createElement('tr');
     const td = document.createElement('td');
     td.className = 'muted';
-    td.textContent = 'Kuyruk boş. Excel sekmesinden bir dosya yükleyip kuyruğu oluşturun.';
+    td.textContent =
+      'Kuyruk boş. Excel sekmesinden itirazları hesaplayıp "Kuyruğa Aktar" ile buraya gönderin.';
     empty.appendChild(td);
     table.appendChild(empty);
     return;
@@ -733,6 +1191,10 @@ function renderQueue(currentIndex = -1) {
     head.appendChild(th);
   }
   table.appendChild(head);
+
+  // Binlerce satırı tek tek eklemek her seferinde yeniden yerleşim tetikler;
+  // fragment'ta toplayıp bir kerede eklemek bunu tek işleme indirir.
+  const fragment = document.createDocumentFragment();
 
   state.queue.forEach((entry, index) => {
     const tr = document.createElement('tr');
@@ -769,8 +1231,10 @@ function renderQueue(currentIndex = -1) {
     remove.appendChild(btn);
     tr.appendChild(remove);
 
-    table.appendChild(tr);
+    fragment.appendChild(tr);
   });
+
+  table.appendChild(fragment);
 }
 
 /** Tek bir satırı kuyruktan çıkarır. */

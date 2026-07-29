@@ -211,6 +211,53 @@ tr.is-current td { background: #fff6ec; }
 
 .summary { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 
+/* Desi itiraz hesaplama --------------------------------------------- */
+
+.summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 110px;
+}
+.summary__item strong { font-size: 18px; }
+.summary__item span { color: var(--muted); font-size: 12px; }
+
+.badge--warn { background: #fff8e5; border-color: #f0d999; color: var(--warn); }
+
+.sep { border: 0; border-top: 1px solid var(--line); margin: 24px 0 4px; }
+
+/* Modal geniş varyantı — kategori tablosu iki sütunlu ve uzun. */
+.modal--wide { width: 620px; max-width: 92vw; }
+.modal--wide .modal__body { text-align: left; }
+
+/* Kategori listesi uzun; modal taşmasın diye kendi içinde kaydırılır. */
+.tablewrap--tall { max-height: 46vh; overflow-y: auto; }
+.tablewrap--tall table input { width: 90px; }
+
+.rules { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 16px; }
+.rules label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.rules label.check { flex-direction: row; align-items: center; gap: 8px; }
+.rules input[type='text'] { width: 140px; }
+
+#claimsPager { align-items: center; gap: 10px; }
+
+/* Sipariş/desi/kargo sütunları dar ve tek satır kalsın; ürün listesi onları
+   ekrandan itmesin diye en sonda ve kesilerek gösterilir. */
+#claimsTable td:not(.cell--products),
+#claimsTable th { white-space: nowrap; }
+
+.cell--products {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
 .log {
   background: #12181f;
   color: #cfd8e3;
