@@ -843,9 +843,11 @@ function claimRow(claim) {
   // Ürünler en sonda: uzun metin desi/kargo sütunlarını ekrandan itmesin.
   const products = document.createElement('td');
   products.className = 'cell--products';
-  products.textContent = claim.items.map((i) => `${i.category} ×${i.adet}`).join(', ');
-  // Kesilen metnin tamamı üzerine gelince görünür.
-  products.title = claim.items.map((i) => `${i.category} ×${i.adet} — ${i.urunAdi}`).join('\n');
+  products.textContent = summarizeItems(claim.items);
+  // Ürün ürün tam döküm üzerine gelince görünür.
+  products.title = claim.items
+    .map((i) => `${i.category} ×${i.adet} (${(i.birimDesi * i.adet).toFixed(2)} desi) — ${i.urunAdi}`)
+    .join('\n');
   if (claim.unknownCategory) {
     // Kategorisi bulunamayan ürün "Diğer" varsayılanıyla hesaplandı;
     // kullanıcı bu satırı gözle kontrol edebilsin.
@@ -859,6 +861,25 @@ function claimRow(claim) {
   tr.appendChild(products);
 
   return tr;
+}
+
+/**
+ * Ürünleri kategori bazında toplar: "Atlet ×8" gibi.
+ *
+ * Aynı kategoriden farklı renk/beden ayrı satır olarak geliyor; ham liste
+ * "Atlet ×2, Atlet ×1, Atlet ×1..." şeklinde okunuyor ve adetlerin toplanıp
+ * toplanmadığı görünmüyordu. Hesaplama zaten toplam üzerinden yapılıyor,
+ * burada yalnızca gösterim aynı mantığı yansıtıyor.
+ */
+function summarizeItems(items) {
+  const byCategory = new Map();
+  for (const item of items) {
+    byCategory.set(item.category, (byCategory.get(item.category) || 0) + item.adet);
+  }
+  return [...byCategory.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, adet]) => `${category} ×${adet}`)
+    .join(', ');
 }
 
 function cell(text) {

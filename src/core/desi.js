@@ -629,6 +629,24 @@ function analyzeFile(filePath, options = {}) {
   };
 }
 
+/**
+ * Ürünleri kategori bazında toplar: "Atlet x8".
+ *
+ * Aynı kategoriden farklı renk/beden ayrı satır olarak gelir; ham liste
+ * "Atlet x2, Atlet x1, Atlet x1..." biçiminde okunur ve adetlerin toplandığı
+ * görünmez. Hesap zaten toplam üzerinden yapılır, bu yalnızca gösterimdir.
+ */
+function summarizeItems(items) {
+  const byCategory = new Map();
+  for (const item of items ?? []) {
+    byCategory.set(item.category, (byCategory.get(item.category) || 0) + item.adet);
+  }
+  return [...byCategory.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([category, adet]) => `${category} x${adet}`)
+    .join(', ');
+}
+
 /** İtiraz listesini Excel'e yazar — kontrol/arşiv amaçlı. */
 function exportClaims(filePath, claims) {
   const headers = [
@@ -653,7 +671,7 @@ function exportClaims(filePath, claims) {
     claim.marka,
     claim.statu,
     claim.siparisTarihiRaw || '',
-    claim.items.map((item) => `${item.category} x${item.adet}`).join(', '),
+    summarizeItems(claim.items),
     claim.toplamAdet,
     claim.mevcutDesi,
     claim.hesapDesi,
@@ -698,4 +716,5 @@ module.exports = {
   parseOrderDate,
   parseOrderNo,
   readOrderWorkbook,
+  summarizeItems,
 };

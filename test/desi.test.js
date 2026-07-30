@@ -530,6 +530,52 @@ test('biçim: tanınmayan dosya anlamlı hata verir', () => {
   assert.throws(() => desi.readOrderWorkbook(file), /beklenen kolonlar bulunamadı/);
 });
 
+// ----------------------------------------------------- gösterim özeti
+
+test('summarizeItems aynı kategoriyi toplar', () => {
+  // Aynı üründen farklı renkler ayrı satır gelir; gösterimde toplanmalı.
+  const text = desi.summarizeItems([
+    { category: 'Atlet', adet: 2 },
+    { category: 'Atlet', adet: 1 },
+    { category: 'Atlet', adet: 1 },
+    { category: 'Atlet', adet: 1 },
+    { category: 'Atlet', adet: 2 },
+    { category: 'Atlet', adet: 1 },
+  ]);
+  assert.equal(text, 'Atlet x8');
+});
+
+test('summarizeItems karışık siparişte adedi çoktan aza sıralar', () => {
+  const text = desi.summarizeItems([
+    { category: 'T-Shirt', adet: 2 },
+    { category: 'Pantolon', adet: 5 },
+    { category: 'T-Shirt', adet: 1 },
+  ]);
+  assert.equal(text, 'Pantolon x5, T-Shirt x3');
+});
+
+test('gösterim toplamı hesaptaki toplam adetle aynı', () => {
+  const claim = desi.computeClaims([
+    withItems(
+      [
+        { urunAdi: 'Kadın Siyah Bluz Atlet', adet: 2 },
+        { urunAdi: 'Kadın Vizon Bluz Atlet', adet: 1 },
+        { urunAdi: 'Kadın Bordo Bluz Atlet', adet: 1 },
+        { urunAdi: 'Kadın Haki Bluz Atlet', adet: 1 },
+        { urunAdi: 'Kadın Beyaz Bluz Atlet', adet: 2 },
+        { urunAdi: 'Kadın Gri Bluz Atlet', adet: 1 },
+      ],
+      { mevcutDesi: 4 }
+    ),
+  ]).claims[0];
+
+  assert.equal(claim.toplamAdet, 8);
+  assert.equal(desi.summarizeItems(claim.items), 'Atlet x8');
+  // 8 x 0.15 = 1.20 -> 2 desi
+  assert.equal(claim.hamDesi, 1.2);
+  assert.equal(claim.hesapDesi, 2);
+});
+
 // ------------------------------------------------------------ yardımcı
 
 test('parseNumber: virgüllü ondalık ve faturalanmamış metni', () => {
