@@ -11,8 +11,15 @@
 
 const WS_URL = 'ws://127.0.0.1:17321';
 const RECONNECT_MS = 3000;
-/** MV3 service worker'ı boşta uyur; bağlantıyı canlı tutmak için ping. */
+/**
+ * MV3 service worker'ı ~30sn boşta uyur. chrome.alarms minimum periyodu 1
+ * dakika olduğu için alarm tek başına worker'ı ayakta tutamaz; her zaman geç
+ * kalır ve bağlantı kopar. Bu yüzden soket üzerinden 20sn'de bir ping atıyoruz:
+ * gelen/giden WebSocket trafiği worker'ın uyku sayacını sıfırlar. Alarm yalnızca
+ * worker yine de sonlandırılırsa devreye giren yedek yol olarak kalır.
+ */
 const KEEPALIVE_MS = 20000;
+let keepaliveTimer = null;
 
 let socket = null;
 
@@ -48,43 +55,94 @@ async function restoreState() {
   }
 }
 
-/** Worker yeniden başlamış olabilir; durum okunmadan iş yapılmamalı. */
-const stateReady = restoreState();
+/**
+ * Worker yeniden başlamış olabilir; durum okunmadan iş yapılmamalı.
+ *
+ * ANCAK bu söz asla askıda kalmamalı: storage.session çağrısı worker yeni
+ * uyanmışken bazen çözülmüyor ve handleAppMessage'ın ilk satırındaki await
+ * sonsuza dek asılı kalıyor. O zaman executeStep hiç işlenmez, uygulama 25 sn
+ * bekleyip "Eklenti yanıt vermedi" der. Kısa bir zaman aşımıyla yarıştır:
+ * durum okunamazsa varsayılanlarla devam etmek, hiç çalışmamaktan iyidir.
+ */
+const stateReady = Promise.race([
+  restoreState(),
+  new Promise((resolve) => setTimeout(resolve, 1000)),
+]);
 
 // ---------------- WebSocket ----------------
 
+/**
+ * Yeniden bağlanma zamanlayıcısı. Aynı anda yalnızca bir tane olmalı; yoksa
+ * her tetikleyici (alarm, onStartup, recordedEvent, onclose) kendi zincirini
+ * başlatır ve paralel connect() çağrıları birbirinin soketini düşürür.
+ */
+let reconnectTimer = null;
+
 function connect() {
-  if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-    return;
+  // CLOSING de "meşgul" sayılmalı. Aksi halde kapanmakta olan bir soket varken
+  // koruma delinir, ikinci soket açılır ve uygulama (tek bağlantı kabul ettiği
+  // için) öncekini kapatır — bu da sonsuz bağlan/kop döngüsü yaratır.
+  if (socket && socket.readyState !== WebSocket.CLOSED) return;
+
+  // Bekleyen bir deneme varsa onu iptal et; tek zincir kalsın.
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
 
+  let pending;
   try {
-    socket = new WebSocket(WS_URL);
+    pending = new WebSocket(WS_URL);
   } catch {
     scheduleReconnect();
     return;
   }
+  socket = pending;
 
-  socket.onopen = () => {
+  pending.onopen = () => {
+    if (socket !== pending) return; // eskimiş soket
     setBadge('ON', '#1f9254');
     send('hello', { version: chrome.runtime.getManifest().version });
+    startKeepalive();
   };
 
-  socket.onmessage = (event) => handleAppMessage(event.data);
+  pending.onmessage = (event) => handleAppMessage(event.data);
 
-  socket.onclose = () => {
+  pending.onclose = () => {
+    if (socket !== pending) return; // yerini yeni soket almış; döngüyü besleme
     setBadge('OFF', '#c0392b');
+    stopKeepalive();
     socket = null;
     scheduleReconnect();
   };
 
-  socket.onerror = () => {
+  pending.onerror = () => {
     // onclose zaten tetiklenecek; burada sessiz kal.
   };
 }
 
 function scheduleReconnect() {
-  setTimeout(connect, RECONNECT_MS);
+  if (reconnectTimer !== null) return; // zaten planlı
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, RECONNECT_MS);
+}
+
+/** Soket trafiğiyle worker'ın uyku sayacını sürekli sıfırla. */
+function startKeepalive() {
+  stopKeepalive();
+  keepaliveTimer = setInterval(() => {
+    if (socket?.readyState === WebSocket.OPEN) send('pong', { keepalive: true });
+    else stopKeepalive();
+  }, KEEPALIVE_MS);
+}
+
+function stopKeepalive() {
+  if (keepaliveTimer !== null) {
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  }
 }
 
 function send(type, payload = {}, requestId = null) {
@@ -100,9 +158,6 @@ function setBadge(text, color) {
 // ---------------- Uygulamadan gelen mesajlar ----------------
 
 async function handleAppMessage(raw) {
-  // Worker yeni uyanmış olabilir; kayıt durumu okunmadan karar verme.
-  await stateReady;
-
   let message;
   try {
     message = JSON.parse(raw);
@@ -112,11 +167,32 @@ async function handleAppMessage(raw) {
 
   const { type, requestId, payload } = message;
 
+  // executeStep ve ping kayıt durumuna hiç bakmaz. Bunları stateReady
+  // bariyerinin ARKASINDA beklemek, oynatmanın tamamen durmasına yol açıyordu:
+  // storage okuması askıda kalırsa hiçbir adım çalışmıyor.
+  if (type === 'ping') return reply(requestId, { pong: true });
+  if (type === 'executeStep') {
+    const step = payload?.step;
+    if (!step) return replyError(requestId, 'Adım yok.');
+    openKeepalivePort(); // uzun oynatmada worker'ı ayakta tut
+    const result = await runStep(step);
+    return reply(requestId, result);
+  }
+
+  // Kalanlar (kayıt başlat/bitir) gerçekten duruma bağlı.
+  await stateReady;
+
   switch (type) {
     case 'startRecording': {
-      const tab = await activeTab();
+      const tab = await resolveTab();
       if (!tab) {
         return replyError(requestId, 'Aktif sekme bulunamadı.');
+      }
+      if (isPrivilegedUrl(tab.url)) {
+        return replyError(
+          requestId,
+          'Bu sayfada eklenti çalışamaz. Chrome\'da Trendyol sekmesine geçip tekrar deneyin.'
+        );
       }
       targetTabId = tab.id;
       recording = true;
@@ -144,16 +220,6 @@ async function handleAppMessage(raw) {
       return reply(requestId, { stopped: true });
     }
 
-    case 'executeStep': {
-      const step = payload?.step;
-      if (!step) return replyError(requestId, 'Adım yok.');
-      const result = await runStep(step);
-      return reply(requestId, result);
-    }
-
-    case 'ping':
-      return reply(requestId, { pong: true });
-
     default:
       return replyError(requestId, `Bilinmeyen mesaj: ${type}`);
   }
@@ -176,36 +242,95 @@ async function activeTab() {
   return tab ?? null;
 }
 
-/** Hedef sekme; kapanmışsa aktif sekmeye düşer. */
+/** Eklentinin çalışamayacağı ayrıcalıklı sayfa mı? */
+function isPrivilegedUrl(url = '') {
+  return (
+    /^(chrome|edge|about|devtools|chrome-extension|view-source):/i.test(url) ||
+    /^https:\/\/chromewebstore\.google\.com/i.test(url)
+  );
+}
+
+/**
+ * Hedef sekme. Sıra: kaydedilmiş sekme → aktif sekme → açık Trendyol sekmesi.
+ *
+ * Aktif sekmeye körlemesine düşmek yetmiyor: kullanıcı "Çalıştır"a masaüstü
+ * uygulamasından basar, o sırada Chrome'un aktif sekmesi chrome://extensions
+ * gibi ayrıcalıklı bir sayfa olabilir ve orada hiçbir eklenti çalışamaz.
+ */
 async function resolveTab() {
   if (targetTabId !== null) {
     try {
       const tab = await chrome.tabs.get(targetTabId);
-      if (tab) return tab;
+      if (tab && !isPrivilegedUrl(tab.url)) return tab;
     } catch {
       targetTabId = null;
     }
   }
-  const tab = await activeTab();
-  if (tab) targetTabId = tab.id;
-  return tab;
+
+  const active = await activeTab();
+  if (active && !isPrivilegedUrl(active.url)) {
+    targetTabId = active.id;
+    return active;
+  }
+
+  // Son çare: açık bir Trendyol sekmesi ara.
+  try {
+    const tabs = await chrome.tabs.query({ url: ['*://*.trendyol.com/*'] });
+    const usable = tabs.find((t) => !isPrivilegedUrl(t.url));
+    if (usable) {
+      targetTabId = usable.id;
+      return usable;
+    }
+  } catch {
+    /* sorgu başarısızsa aşağıdaki dönüşe düş */
+  }
+
+  return active ?? null;
 }
 
-/** Content script yoksa enjekte eder; chrome:// sayfalarında başarısız olur. */
+/**
+ * Content script yoksa enjekte eder; chrome:// sayfalarında başarısız olur.
+ * Başarısızlık sebebini `lastContentError`e yazar — sebebi yutmak, kullanıcıya
+ * "content script yok" dışında hiçbir ipucu bırakmıyordu.
+ */
+let lastContentError = null;
+
 async function ensureContent(tabId) {
+  lastContentError = null;
   try {
     await chrome.tabs.sendMessage(tabId, { kind: 'ping' });
     return true;
   } catch {
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['selectors.js', 'content.js'],
-      });
-      return true;
-    } catch {
-      return false;
-    }
+    // Ping başarısız — betik henüz yok. Enjekte etmeyi dene.
+  }
+
+  let url = '';
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    url = tab?.url ?? '';
+  } catch {
+    lastContentError = 'Sekme bulunamadı (kapanmış olabilir).';
+    return false;
+  }
+
+  // Ayrıcalıklı sayfalarda hiçbir eklenti çalışamaz; bunu net söyle.
+  if (/^(chrome|edge|about|devtools|chrome-extension):/i.test(url) ||
+      /^https:\/\/chromewebstore\.google\.com/i.test(url)) {
+    lastContentError =
+      `Bu sayfada eklenti çalışamaz (${url.split('/')[0]}//…). ` +
+      'Chrome\'da Trendyol sekmesine geçip tekrar deneyin.';
+    return false;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['selectors.js', 'content.js'],
+    });
+    return true;
+  } catch (err) {
+    lastContentError = `Enjeksiyon başarısız: ${err.message} (sayfa: ${url})`;
+    return false;
   }
 }
 
@@ -229,7 +354,10 @@ async function runStep(step) {
   if (!tab) return { status: 'failed', detail: 'Sekme bulunamadı.' };
 
   if (!(await ensureContent(tab.id))) {
-    return { status: 'failed', detail: 'Sayfaya erişilemedi (content script yok).' };
+    return {
+      status: 'failed',
+      detail: lastContentError ?? 'Sayfaya erişilemedi (content script yok).',
+    };
   }
 
   try {
@@ -309,6 +437,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.kind === 'getStatus') {
+    // Worker yeni uyanmışsa soket henüz CONNECTING olabilir. Hemen "bağlı değil"
+    // demek yerine el sıkışmanın bitmesini kısa süre bekle.
+    if (!socket || socket.readyState === WebSocket.CLOSED) connect();
+
+    if (socket && socket.readyState === WebSocket.CONNECTING) {
+      const pending = socket;
+      const settle = () => {
+        pending.removeEventListener('open', settle);
+        pending.removeEventListener('close', settle);
+        clearTimeout(timer);
+        sendResponse({
+          connected: pending.readyState === WebSocket.OPEN,
+          recording,
+          targetTabId,
+        });
+      };
+      const timer = setTimeout(settle, 1500);
+      pending.addEventListener('open', settle);
+      pending.addEventListener('close', settle);
+      return true; // async yanıt
+    }
+
     sendResponse({
       connected: socket?.readyState === WebSocket.OPEN,
       recording,
@@ -330,12 +480,38 @@ stateReady.then(() => {
   if (recording) setBadge('REC', '#f27a1a');
 });
 
-// MV3 service worker uykuya dalarsa WebSocket kopar; alarm ile uyanık tut.
-chrome.alarms.create('keepalive', { periodInMinutes: KEEPALIVE_MS / 60000 });
+/**
+ * İçerik betiğiyle kalıcı bir port açık tutar. Chrome, bağlı portu olan bir
+ * service worker'ı canlı tutar; bu, setInterval ping'inden belirgin şekilde
+ * dayanıklıdır (uzun oynatmalarda worker yine de uyuyup executeStep'i
+ * yanıtsız bırakıyordu). Port koparsa yeniden kurulur.
+ */
+let keepalivePort = null;
+
+async function openKeepalivePort() {
+  if (keepalivePort) return;
+  try {
+    const tab = await resolveTab();
+    if (!tab || isPrivilegedUrl(tab.url)) return;
+    if (!(await ensureContent(tab.id))) return;
+
+    keepalivePort = chrome.tabs.connect(tab.id, { name: 'desi-keepalive' });
+    keepalivePort.onDisconnect.addListener(() => {
+      keepalivePort = null;
+    });
+  } catch {
+    keepalivePort = null;
+  }
+}
+
+// Yedek yol: ping'e rağmen worker sonlandırılırsa alarm onu uyandırıp yeniden
+// bağlar. Chrome minimum periyodu 1 dakikadır; altındaki değerler yok sayılır.
+chrome.alarms.create('keepalive', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== 'keepalive') return;
   if (!socket || socket.readyState !== WebSocket.OPEN) connect();
   else send('pong', { keepalive: true });
+  openKeepalivePort();
 });
 
 connect();

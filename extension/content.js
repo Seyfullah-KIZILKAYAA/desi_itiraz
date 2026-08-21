@@ -180,6 +180,27 @@
         }
         tried++;
       }
+
+      // Yan menülerde alt bağlantılar kapalı bir panelin içindedir; paneli açan
+      // başlık hedefin ATASI değil, panelin görünür KARDEŞİDİR (ör. li > [başlık,
+      // panel]). Bu yüzden her ata seviyesinde görünür kardeşleri de tetikle.
+      if (node.parentElement) {
+        for (const sib of node.parentElement.children) {
+          if (sib === node || !S_.isVisible(sib)) continue;
+          // Yalnızca başlık gibi davranan küçük öğeler; kocaman kapsayıcılara
+          // tıklayıp sayfayı gezdirmeyelim.
+          if (sib.querySelector('a, button, [role="button"]') === null && sib.children.length > 3) {
+            continue;
+          }
+          dispatchPointerSequence(sib);
+          try {
+            sib.click();
+          } catch {
+            /* tıklanabilir değilse yoksay */
+          }
+        }
+      }
+
       node = node.parentElement;
     }
   }
@@ -291,6 +312,23 @@
               ({ element, diagnostics } = await S().resolveSelector(step.selector, {
                 perStrategyMs,
               }));
+
+              // Menü hâlâ açılmadıysa gizli elemanın kendisine tıkla. Bir <a>
+              // ya da buton, görünür olmasa da tıklanınca işlevini yapar; menü
+              // animasyonuna takılıp adımı büsbütün kaybetmekten iyidir.
+              if (!element) {
+                const target = hidden.element.closest('a, button, [role="button"], [role="menuitem"]')
+                  ?? hidden.element;
+                try {
+                  target.scrollIntoView({ block: 'center' });
+                } catch {
+                  /* scroll edilemiyorsa devam */
+                }
+                dispatchPointerSequence(target);
+                target.click();
+                await waitForDomSettle({ quietMs: 300, maxMs: 2000 });
+                return { status: 'ok', detail: 'Gizli menü öğesine doğrudan tıklandı' };
+              }
             }
           }
 
@@ -351,6 +389,15 @@
   }
 
   // ---------------- Arka planla iletişim ----------------
+
+  // Arka plan, worker'ı canlı tutmak için kalıcı bir port açar. Bağlantıyı
+  // kabul etmek yeterli; mesaj alışverişi gerekmez.
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'desi-keepalive') return;
+    port.onDisconnect.addListener(() => {
+      /* arka plan yeniden kuracak */
+    });
+  });
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.kind) {

@@ -5,6 +5,9 @@ const status = document.getElementById('status');
 const tabInfo = document.getElementById('tab');
 const hint = document.getElementById('hint');
 
+// Yeni kodun gerçekten yüklendiğini gözle doğrulayabilmek için sürümü göster.
+document.getElementById('ver').textContent = `Sürüm ${chrome.runtime.getManifest().version}`;
+
 chrome.runtime.sendMessage({ kind: 'getStatus' }, (response) => {
   if (chrome.runtime.lastError || !response) {
     status.textContent = 'Eklenti yanıt vermiyor';

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Desi İtiraz Köprüsü",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Masaüstü uygulamasına bağlanır; itiraz akışını kaydeder ve tekrar oynatır.",
   "permissions": ["scripting", "activeTab", "tabs", "storage", "alarms"],
   "host_permissions": ["<all_urls>"],

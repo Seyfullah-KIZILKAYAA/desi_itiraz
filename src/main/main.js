@@ -50,6 +50,12 @@ function wireEvents() {
   bridge.on('connected', () => emit('bridge:status', { connected: true, port: bridge.port }));
   bridge.on('disconnected', () => emit('bridge:status', { connected: false, port: bridge.port }));
   bridge.on('bridgeError', (err) => emit('bridge:error', { message: err.message }));
+  bridge.on('portInUse', ({ port }) =>
+    emit('bridge:error', {
+      fatal: true,
+      message: `Uygulamanın başka bir örneği açık (port ${port}) — bu pencereyi kapatın`,
+    })
+  );
   bridge.on(ToApp.TAB_INFO, (payload) => emit('bridge:tab', payload));
 
   recorder.on('stepAdded', ({ recording, step, merged }) =>
@@ -272,7 +278,23 @@ function registerIpc() {
   ipcMain.handle('player:stop', () => player.stop());
 }
 
+// Tek örnek kilidi. İkinci bir örnek açılırsa port çakışır, eklenti yanlış
+// örneğe bağlanır ve kullanıcı "bağlı değil" sanır. İkinciyi hemen kapat,
+// var olan pencereyi öne getir.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (window && !window.isDestroyed()) {
+      if (window.isMinimized()) window.restore();
+      window.focus();
+    }
+  });
+}
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
   const dataDir = path.join(app.getPath('userData'), 'data');
 
   library = new RecordingLibrary(dataDir);
@@ -281,10 +303,13 @@ app.whenReady().then(() => {
   recorder = new Recorder({ bridge, library });
   player = new Player({ bridge, library });
 
-  bridge.start();
+  // Dinleyiciler köprüden ÖNCE bağlanmalı. Aksi halde eklenti tam bu aralıkta
+  // bağlanırsa 'connected' olayı dinleyicisiz yayılıp kaybolur ve arayüz
+  // kalıcı olarak "bağlı değil" durumunda takılı kalır.
+  wireEvents();
   registerIpc();
   createWindow();
-  wireEvents();
+  bridge.start();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -294,4 +319,15 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   bridge?.stop();
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Köprü kapanmazsa (açık soket/zamanlayıcı) süreç penceresiz hayalet olarak
+// yaşamaya devam eder ve portu tutar; sonraki açılış "başka örnek açık"
+// hatası verir. Çıkışta kapanışı garantiye al.
+app.on('before-quit', () => {
+  bridge?.stop();
+});
+
+app.on('will-quit', () => {
+  bridge?.stop();
 });

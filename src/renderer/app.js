@@ -95,18 +95,43 @@ document.querySelectorAll('.tab').forEach((tab) => {
 
 // ---------------- Köprü durumu ----------------
 
+/** Port çakışması gibi kalıcı sorunlar durum yazısını ele geçirir. */
+let bridgeFault = null;
+
 function paintBridge({ connected, port }) {
   const box = $('bridgeStatus');
   box.classList.toggle('status--on', connected);
   box.classList.toggle('status--off', !connected);
+
+  if (!connected && bridgeFault) {
+    $('bridgeText').textContent = bridgeFault;
+    return;
+  }
+  if (connected) bridgeFault = null;
+
   $('bridgeText').textContent = connected
     ? `Eklenti bağlı (:${port})`
     : `Eklenti bağlı değil (:${port} bekleniyor)`;
 }
 
 window.api.bridge.onStatus(paintBridge);
-window.api.bridge.onError(({ message }) => log(`Köprü hatası: ${message}`, 'fail'));
+window.api.bridge.onError(({ message, fatal }) => {
+  log(`Köprü hatası: ${message}`, 'fail');
+  // Günlük yalnızca Çalıştır sekmesinde görünür; kalıcı arızayı üstteki
+  // durum çubuğunda da göster ki hangi sekmede olursa olsun fark edilsin.
+  if (fatal) {
+    bridgeFault = message;
+    window.api.bridge.status().then(paintBridge);
+  }
+});
 window.api.bridge.status().then(paintBridge);
+
+// Olay tabanlı güncelleme tek bir kaçan mesajda pencereyi kalıcı olarak yanlış
+// durumda bırakabiliyor (ör. bağlantı, pencere hazır olmadan kurulursa).
+// Gerçek durumu düzenli aralıkla doğrula.
+setInterval(() => {
+  window.api.bridge.status().then(paintBridge);
+}, 3000);
 
 // ---------------- Kayıt Kitaplığı ----------------
 
