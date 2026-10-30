@@ -11,6 +11,7 @@ const state = {
   excel: null, // {filePath, headers, mapping, preview}
   orders: null, // yüklenen sipariş dosyasının özeti
   claims: [], // hesaplanan itiraz listesi
+  all: [], // hesaplanan TÜM siparişler (itiraz edilecek + edilmeyecek)
   claimsPage: 0,
   selectedClaims: new Set(),
   queue: [],
@@ -687,6 +688,7 @@ $('btnPickOrders').addEventListener('click', async () => {
 
     state.orders = result;
     state.claims = [];
+    state.all = [];
     state.claimsPage = 0;
     state.selectedClaims = new Set();
 
@@ -714,8 +716,9 @@ $('btnCompute').addEventListener('click', async () => {
   desiBanner('Hesaplanıyor…');
 
   try {
-    const { claims, stats } = await window.api.desi.compute();
+    const { claims, all, stats } = await window.api.desi.compute();
     state.claims = claims;
+    state.all = all;
     state.claimsPage = 0;
     state.selectedClaims = new Set();
 
@@ -969,6 +972,19 @@ $('btnExportClaims').addEventListener('click', async () => {
   try {
     const saved = await window.api.desi.exportClaims(state.claims);
     if (saved) desiBanner(`Excel'e aktarıldı: ${saved}`, 'ok');
+  } catch (err) {
+    desiBanner(`Aktarılamadı: ${err.message}`, 'warn');
+  }
+});
+
+$('btnExportAll').addEventListener('click', async () => {
+  if (state.all.length === 0) {
+    alert('Önce "İtirazları Hesapla" ile hesaplama yapın.');
+    return;
+  }
+  try {
+    const saved = await window.api.desi.exportAll(state.all);
+    if (saved) desiBanner(`Tüm sonuçlar Excel'e aktarıldı: ${saved}`, 'ok');
   } catch (err) {
     desiBanner(`Aktarılamadı: ${err.message}`, 'warn');
   }

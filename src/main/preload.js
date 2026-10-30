@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('api', {
     defaultCategories: () => ipcRenderer.invoke('desi:defaultCategories'),
     compute: () => ipcRenderer.invoke('desi:compute'),
     exportClaims: (claims) => ipcRenderer.invoke('desi:exportClaims', { claims }),
+    exportAll: (all) => ipcRenderer.invoke('desi:exportAll', { all }),
   },
 
   player: {

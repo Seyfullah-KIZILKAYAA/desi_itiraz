@@ -23,7 +23,10 @@ function defaultSettings() {
     priceThresholdNew: DEFAULT_PRICE_THRESHOLD_NEW,
     priceChangeDate: DEFAULT_PRICE_CHANGE_DATE,
     returnPriceThreshold: DEFAULT_RETURN_PRICE_THRESHOLD,
-    includeReturned: false,
+    // İade edilmiş olması tek başına elemek için yeterli değil: desi
+    // tutarsızlığı varsa (diğer kurallar geçiliyorsa) o sipariş de itiraza
+    // girsin diye varsayılan olarak dahil edilir.
+    includeReturned: true,
   };
 }
 

@@ -255,8 +255,8 @@ function registerIpc() {
   ipcMain.handle('desi:compute', () => {
     if (!loadedOrders) throw new Error('Önce bir Excel dosyası yükleyin.');
     const current = settings.read();
-    const { claims, stats } = desi.computeClaims(loadedOrders, current);
-    return { claims, stats, filePath: loadedFilePath, settings: current };
+    const { claims, all, stats } = desi.computeClaims(loadedOrders, current);
+    return { claims, all, stats, filePath: loadedFilePath, settings: current };
   });
 
   ipcMain.handle('desi:exportClaims', async (_e, { claims }) => {
@@ -267,6 +267,16 @@ function registerIpc() {
     });
     if (result.canceled || !result.filePath) return null;
     return desi.exportClaims(result.filePath, claims);
+  });
+
+  ipcMain.handle('desi:exportAll', async (_e, { all }) => {
+    const result = await dialog.showSaveDialog(window, {
+      title: 'Tüm sonuçları kaydet',
+      defaultPath: 'desi_tum_sonuclar.xlsx',
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    return desi.exportAllResults(result.filePath, all);
   });
 
   // --- Player ---

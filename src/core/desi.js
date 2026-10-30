@@ -9,6 +9,7 @@
  */
 
 const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 
 /**
  * Trendyol dosyasında 1. satır yasal uyarı metnidir, gerçek başlık 2. satırdadır.
@@ -456,8 +457,20 @@ function computeOrderDesi(order, categoryDesi, matchers, cache) {
   return { hamDesi, hesapDesi, breakdown, unknownCategory };
 }
 
+/** Elenme sebebi kodu -> kullanıcıya gösterilecek Türkçe açıklama. */
+const ELENME_SEBEBI_LABEL = {
+  iade: 'İade edildiği için',
+  fiyat: 'Kargo tutarı eşikte veya altında',
+  taban: 'Mevcut desi 1 veya altı',
+  kucultmeYok: 'Hesaplanan desi küçültme sağlamıyor',
+  yetersizFark: 'Fark 2 desiden az',
+};
+
 /**
- * Filtre kurallarını uygulayıp itiraz edilecek siparişleri döndürür.
+ * Filtre kurallarını uygulayıp itiraz edilecek/edilmeyecek TÜM siparişleri
+ * döndürür. Statü veya fiyat yüzünden elenen siparişler de (iade dahil)
+ * dahil olmak üzere her sipariş için desi hesaplanır — yalnızca hangi
+ * kuralın onu elediği ayrıca işaretlenir.
  *
  * Kurallar (PLAN §3 Adım 4) — hepsi geçilmeli:
  *  1. Fiyat: kargo tutarı sayısal ve <= eşik ise elenir. Faturalanmamış
@@ -469,6 +482,10 @@ function computeOrderDesi(order, categoryDesi, matchers, cache) {
  *  5. Yükseltme: mevcutDesi 3'ün üstündeyken hesap 1 çıkarsa 2 girilir.
  *  6. Fark: mevcut ile girilecek arasında en az 2 fark olmalı; panel
  *     1 farklı itirazı (2 -> 1 gibi) kabul etmiyor.
+ *
+ * Kurallar sırayla sınanır ve bir sipariş için yalnızca İLK uyan kural
+ * elenme sebebi olarak kaydedilir (istatistikler eski davranışla birebir
+ * aynı kalsın diye) — ama her sipariş için hesap her durumda yapılır.
  *
  * @param {object[]} orders  groupByOrder çıktısı
  * @param {object} options
@@ -506,6 +523,7 @@ function computeClaims(orders, options = {}) {
   // maliyetini ürün adı başına bir kez ödemek için önbellek.
   const categoryCache = new Map();
   const claims = [];
+  const all = [];
   const stats = {
     toplamSiparis: orders.length,
     elenenFiyat: 0,
@@ -519,6 +537,8 @@ function computeClaims(orders, options = {}) {
   };
 
   for (const order of orders) {
+    let elenmeSebebi = null;
+
     // Kural 4 — statü. Yalnızca SİPARİŞ dosyasında anlamlı: orada "İade edildi"
     // satırı iade olmuş bir siparişi gösterir. İade dosyasında "Durum" iade
     // sürecinin aşamasıdır (Onaylandı/Kargolandı/...), zaten hepsi iadedir;
@@ -528,8 +548,7 @@ function computeClaims(orders, options = {}) {
       !includeReturned &&
       normalizeText(order.statu).includes('iade')
     ) {
-      stats.elenenIade += 1;
-      continue;
+      elenmeSebebi = 'iade';
     }
 
     // Kural 1 — fiyat. null (faturalanmamış) dahil edilir.
@@ -546,17 +565,18 @@ function computeClaims(orders, options = {}) {
           ? priceThresholdNew
           : priceThreshold;
     }
-    if (order.kargoTutari !== null && order.kargoTutari <= esik) {
-      stats.elenenFiyat += 1;
-      continue;
+    if (elenmeSebebi === null && order.kargoTutari !== null && order.kargoTutari <= esik) {
+      elenmeSebebi = 'fiyat';
     }
 
     // Kural 3 — taban. mevcutDesi okunamadıysa da karşılaştırma yapılamaz.
-    if (order.mevcutDesi === null || order.mevcutDesi <= 1) {
-      stats.elenenTaban += 1;
-      continue;
+    const tabanElendi = order.mevcutDesi === null || order.mevcutDesi <= 1;
+    if (elenmeSebebi === null && tabanElendi) {
+      elenmeSebebi = 'taban';
     }
 
+    // Desi her sipariş için hesaplanır — elenen (iade dahil) siparişlerde de
+    // bilgi amaçlı gösterilebilsin diye erken çıkış yapılmaz.
     const { hamDesi, hesapDesi, breakdown, unknownCategory } = computeOrderDesi(
       order,
       categoryDesi,
@@ -571,22 +591,41 @@ function computeClaims(orders, options = {}) {
     const ikiyeYukseltildi = hesapDesi === 1 && order.mevcutDesi > RAISE_TO_TWO_ABOVE;
     if (ikiyeYukseltildi) girilecekDesi = 2;
 
-    // Kural 2 — yalnızca küçültme
-    if (girilecekDesi >= order.mevcutDesi) {
-      stats.elenenKucultmeYok += 1;
-      continue;
+    // Kural 2 ve 6 yalnızca taban elemediyse anlamlı (mevcutDesi > 1 garanti).
+    if (!tabanElendi) {
+      if (elenmeSebebi === null && girilecekDesi >= order.mevcutDesi) {
+        elenmeSebebi = 'kucultmeYok';
+      }
+      if (
+        elenmeSebebi === null &&
+        order.mevcutDesi - girilecekDesi < MIN_DESI_GAP
+      ) {
+        elenmeSebebi = 'yetersizFark';
+      }
     }
 
-    // Kural 6 — panel 1 fark kabul etmiyor; en az 2 desi düşürebilmeliyiz.
-    if (order.mevcutDesi - girilecekDesi < MIN_DESI_GAP) {
-      stats.elenenYetersizFark += 1;
-      continue;
+    switch (elenmeSebebi) {
+      case 'iade':
+        stats.elenenIade += 1;
+        break;
+      case 'fiyat':
+        stats.elenenFiyat += 1;
+        break;
+      case 'taban':
+        stats.elenenTaban += 1;
+        break;
+      case 'kucultmeYok':
+        stats.elenenKucultmeYok += 1;
+        break;
+      case 'yetersizFark':
+        stats.elenenYetersizFark += 1;
+        break;
+      default:
+        if (unknownCategory) stats.kategoriBulunamayan += 1;
+        if (ikiyeYukseltildi) stats.yukseltilenIkiDesi += 1;
     }
 
-    if (unknownCategory) stats.kategoriBulunamayan += 1;
-    if (ikiyeYukseltildi) stats.yukseltilenIkiDesi += 1;
-
-    claims.push({
+    const record = {
       siparisNo: order.siparisNo,
       paketNo: order.paketNo,
       marka: order.marka,
@@ -605,26 +644,33 @@ function computeClaims(orders, options = {}) {
       unknownCategory,
       toplamAdet: breakdown.reduce((sum, item) => sum + item.adet, 0),
       items: breakdown,
-    });
+      itirazEdilecek: elenmeSebebi === null,
+      elenmeSebebi,
+      elenmeSebebiEtiket: elenmeSebebi ? ELENME_SEBEBI_LABEL[elenmeSebebi] : '',
+    };
+
+    all.push(record);
+    if (elenmeSebebi === null) claims.push(record);
   }
 
   stats.itirazEdilecek = claims.length;
   // Büyük fark önce: en çok kazandıracak itirazlar listenin başında olsun.
   claims.sort((a, b) => b.mevcutDesi - b.hesapDesi - (a.mevcutDesi - a.hesapDesi));
 
-  return { claims, stats };
+  return { claims, all, stats };
 }
 
 /** Excel yolundan itiraz listesine kadar olan akışın tamamı. */
 function analyzeFile(filePath, options = {}) {
   const workbook = readOrderWorkbook(filePath);
   const orders = groupByOrder(workbook);
-  const { claims, stats } = computeClaims(orders, options);
+  const { claims, all, stats } = computeClaims(orders, options);
   return {
     sheetName: workbook.sheetName,
     satirSayisi: workbook.rows.length,
     orders,
     claims,
+    all,
     stats,
   };
 }
@@ -690,6 +736,74 @@ function exportClaims(filePath, claims) {
   return filePath;
 }
 
+/** İtiraz edilecek satırlar için açık yeşil, edilmeyecekler için açık kırmızı dolgu. */
+const ROW_FILL = {
+  itiraz: 'FFDFF5E1',
+  yok: 'FFFBE1E1',
+};
+
+/**
+ * Hesaplanan TÜM siparişleri (itiraz edilecek + edilmeyecek, iade dahil)
+ * Excel'e yazar — kullanıcı hangi siparişin neden elendiğini görebilsin diye.
+ * "xlsx" paketinin ücretsiz sürümü hücre rengi yazmayı desteklemediği için
+ * bu export exceljs ile yapılır; başka bir stil (kalın, kenarlık vb.) eklenmez.
+ */
+async function exportAllResults(filePath, all) {
+  const headers = [
+    'Sipariş No',
+    'Paket No',
+    'Marka',
+    'Statü',
+    'Sipariş Tarihi',
+    'Ürünler',
+    'Toplam Adet',
+    'Mevcut Desi',
+    'Hesaplanan Desi',
+    'Girilecek Desi',
+    'Fark',
+    'Kargo Tutarı',
+    'Kategori Bulunamadı',
+    'İtiraz Edilecek mi?',
+    'Elenme Sebebi',
+  ];
+
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Tüm Sonuçlar');
+  sheet.columns = headers.map((h) => ({ header: h, width: h === 'Ürünler' ? 40 : 18 }));
+
+  for (const row of all) {
+    const excelRow = sheet.addRow([
+      row.siparisNo,
+      row.paketNo,
+      row.marka,
+      row.statu,
+      row.siparisTarihiRaw || '',
+      summarizeItems(row.items),
+      row.toplamAdet,
+      row.mevcutDesi,
+      row.hesaplananDesi,
+      row.itirazEdilecek ? row.hesapDesi : '',
+      row.mevcutDesi !== null ? row.mevcutDesi - row.hesaplananDesi : '',
+      row.faturalanmamis ? 'Henüz fatura kesilmemiştir.' : row.kargoTutari,
+      row.unknownCategory ? 'Evet' : '',
+      row.itirazEdilecek ? 'Evet' : 'Hayır',
+      row.elenmeSebebiEtiket || '',
+    ]);
+
+    const fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: row.itirazEdilecek ? ROW_FILL.itiraz : ROW_FILL.yok },
+    };
+    excelRow.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = fill;
+    });
+  }
+
+  await workbook.xlsx.writeFile(filePath);
+  return filePath;
+}
+
 module.exports = {
   COLUMNS,
   RETURN_COLUMNS,
@@ -710,6 +824,8 @@ module.exports = {
   computeOrderDesi,
   detectCategory,
   exportClaims,
+  exportAllResults,
+  ELENME_SEBEBI_LABEL,
   groupByOrder,
   normalizeText,
   parseNumber,

@@ -19,7 +19,7 @@ test('dosya yokken varsayılanlar döner', () => {
   const settings = new DesiSettings(tempDir());
   const read = settings.read();
   assert.equal(read.priceThreshold, DEFAULT_PRICE_THRESHOLD);
-  assert.equal(read.includeReturned, false);
+  assert.equal(read.includeReturned, true);
   assert.equal(read.categoryDesi['T-Shirt'], 0.2);
 });
 
