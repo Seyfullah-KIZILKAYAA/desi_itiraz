@@ -12,6 +12,7 @@
       <div id="bridgeStatus" class="status status--off">
         <span class="dot"></span><span id="bridgeText">Eklenti bağlı değil</span>
       </div>
+      <button id="btnCloseApp" type="button">Kapat</button>
     </header>
 
     <nav class="tabs">
@@ -75,6 +76,7 @@
             <input type="checkbox" id="claimSelectAll" />
             Sayfadakileri seç
           </label>
+          <button id="btnCloseClaims" type="button">Sonuçları Kapat</button>
           <button id="btnDeleteSelected">Seçilenleri Sil</button>
           <button id="btnExportClaims">Excel'e Aktar</button>
           <button id="btnExportAll">Tüm Sonuçları Excel'e Aktar</button>
@@ -159,7 +161,10 @@
     -->
     <div id="modalBack" class="modal-back" hidden>
       <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal__title" id="modalTitle"></div>
+        <div class="modal__header">
+          <div class="modal__title" id="modalTitle"></div>
+          <button id="modalClose" class="modal__close" type="button" aria-label="Kapat">×</button>
+        </div>
         <div class="modal__body" id="modalBody"></div>
         <input type="text" id="modalInput" />
         <div class="modal__actions">
@@ -172,7 +177,10 @@
     <!-- Desi Bilgileri — kategori ortalama desileri ve kurallar -->
     <div id="desiBack" class="modal-back" hidden>
       <div class="modal modal--wide" role="dialog" aria-modal="true">
-        <div class="modal__title">Desi Bilgileri</div>
+        <div class="modal__header">
+          <div class="modal__title">Desi Bilgileri</div>
+          <button id="desiClose" class="modal__close" type="button" aria-label="Kapat">×</button>
+        </div>
         <div class="modal__body">
           <p class="muted">
             Her kategori için bir ürünün ortalama desisi. Bir siparişin desisi,

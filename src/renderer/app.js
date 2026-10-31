@@ -43,6 +43,7 @@ function ask(title, { body = '', value = '', okLabel = 'Tamam' } = {}) {
     const input = $('modalInput');
     const ok = $('modalOk');
     const cancel = $('modalCancel');
+    const closeButton = $('modalClose');
 
     $('modalTitle').textContent = title;
     $('modalBody').textContent = body;
@@ -53,6 +54,7 @@ function ask(title, { body = '', value = '', okLabel = 'Tamam' } = {}) {
       back.hidden = true;
       ok.removeEventListener('click', onOk);
       cancel.removeEventListener('click', onCancel);
+      closeButton.removeEventListener('click', onCancel);
       input.removeEventListener('keydown', onKey);
       back.removeEventListener('mousedown', onBackdrop);
       resolve(result);
@@ -71,6 +73,7 @@ function ask(title, { body = '', value = '', okLabel = 'Tamam' } = {}) {
 
     ok.addEventListener('click', onOk);
     cancel.addEventListener('click', onCancel);
+    closeButton.addEventListener('click', onCancel);
     input.addEventListener('keydown', onKey);
     back.addEventListener('mousedown', onBackdrop);
 
@@ -79,6 +82,8 @@ function ask(title, { body = '', value = '', okLabel = 'Tamam' } = {}) {
     input.select();
   });
 }
+
+$('btnCloseApp').addEventListener('click', () => window.close());
 
 // ---------------- Sekmeler ----------------
 
@@ -622,6 +627,7 @@ function askVariable(value, guess) {
     const back = $('modalBack');
     const input = $('modalInput');
     const actions = document.querySelector('.modal__actions');
+    const closeButton = $('modalClose');
 
     $('modalTitle').textContent = 'Bu değeri değişken olarak kaydedeyim mi?';
     $('modalBody').textContent =
@@ -637,8 +643,12 @@ function askVariable(value, guess) {
       back.hidden = true;
       input.hidden = false;
       actions.innerHTML = originalActions;
+      closeButton.removeEventListener('click', onCancel);
       resolve(result);
     };
+
+    const onCancel = () => close(null);
+    closeButton.addEventListener('click', onCancel);
 
     actions.textContent = '';
 
@@ -731,6 +741,11 @@ $('btnCompute').addEventListener('click', async () => {
   } finally {
     button.disabled = false;
   }
+});
+
+$('btnCloseClaims').addEventListener('click', () => {
+  $('claimsBox').hidden = true;
+  $('claimStats').hidden = true;
 });
 
 function renderClaimStats(stats) {
@@ -1142,6 +1157,10 @@ $('desiSave').addEventListener('click', async () => {
       : 'Desi bilgileri kaydedildi.',
     'ok'
   );
+});
+
+$('desiClose').addEventListener('click', () => {
+  $('desiBack').hidden = true;
 });
 
 $('desiCancel').addEventListener('click', () => {
